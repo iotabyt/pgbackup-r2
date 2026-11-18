@@ -84,7 +84,7 @@ jobs:
       PUSH: ${{ startsWith(github.ref, 'refs/tags/v') }}
     steps:
       - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build pg${{ matrix.pg }}
         uses: docker/build-push-action@v7
