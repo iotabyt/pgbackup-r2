@@ -1,17 +1,17 @@
 {
-  "$schema": "./node_modules/wrangler/config-schema.json",
-  // The docs site: static files only, served by Cloudflare's asset handling. No Worker code.
-  "name": "pgbackup-r2-docs",
-  "compatibility_date": "2026-11-18",
-  "assets": {
-    "directory": "./dist",
-    "not_found_handling": "404-page",
-    "html_handling": "auto-trailing-slash"
-  },
-  // workers.dev stays on until pgbackup-r2.iotabyt.com is live; then set it to false.
-  "workers_dev": true,
-  "preview_urls": true,
-  "observability": {
-    "logs": { "enabled": true }
-  }
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	// The docs site: static files only, served by Cloudflare's asset handling. No Worker code.
+	"name": "pgbackup-r2-docs",
+	"compatibility_date": "2026-11-18",
+	"assets": {
+		"directory": "./dist",
+		"not_found_handling": "404-page",
+		"html_handling": "auto-trailing-slash",
+	},
+	// workers.dev stays on until pgbackup-r2.iotabyt.com is live; then set it to false.
+	"workers_dev": false,
+	"preview_urls": true,
+	"observability": {
+		"logs": { "enabled": true },
+	},
 }
