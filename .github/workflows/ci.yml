@@ -65,7 +65,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - name: Build pg${{ matrix.pg }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           build-args: PG_MAJOR=${{ matrix.pg }}
@@ -91,7 +91,7 @@ jobs:
 
       - name: Push pg${{ matrix.pg }} and ${{ github.ref_name }}-pg${{ matrix.pg }}
         if: env.PUSH == 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           build-args: PG_MAJOR=${{ matrix.pg }}
