@@ -21,7 +21,7 @@ PASS  shop/2026-11-18T020000Z.dump.age  (48.2 MB, restored in 21.4s)
 ## Quick start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/install.sh | sh
+curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | sh
 mkdir acme-backups && cd acme-backups && pgb init   # writes a commented .env
 pgb keygen            # then fill in .env: bucket, token, DATABASE_URL and both keys
 pgb doctor            # checks Docker, the database, the bucket and the keys

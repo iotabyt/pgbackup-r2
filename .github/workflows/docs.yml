@@ -4,8 +4,8 @@ name: docs
 # its own (Workers Builds, watching docs/*), so this workflow never deploys anything.
 on:
   pull_request:
-    # CHANGELOG.md too: the site's Changelog page imports it.
-    paths: ["docs/**", "CHANGELOG.md"]
+    # CHANGELOG.md too: the site's Changelog page imports it. README.md: the install-URL check.
+    paths: ["docs/**", "CHANGELOG.md", "README.md"]
 
 permissions:
   contents: read
@@ -31,6 +31,9 @@ jobs:
 
       # astro check, astro build, then the CSP hashes for dist/_headers.
       - run: npm run build
+
+      # Install commands use the short URL, and its redirects are still in public/_redirects.
+      - run: npm run check:install-urls
 
       # Internal links and #anchors only (--offline), so a slow or flaky external site can
       # never fail a PR. Directory links resolve to their index.html, the way Cloudflare

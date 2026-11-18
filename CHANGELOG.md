@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## Unreleased
+
+- Short install URL: `curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | sh`. In PowerShell, the install line downloads from `https://pgbackup-r2.iotabyt.com/install.ps1`. Both redirect (302) to the scripts on GitHub. The README and docs use them everywhere, and the Install page keeps the GitHub URLs for networks that block redirects.
+
+## 0.2.0 (2026-11-18)
 
 `pgb` is now the main way to use pgbackup-r2. It's still a thin wrapper around Docker, with no Python on the host, and the same in bash (`scripts/pgb`) and PowerShell (`scripts/pgb.ps1`).
 

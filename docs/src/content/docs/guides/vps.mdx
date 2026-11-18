@@ -21,7 +21,7 @@ Ama runs a shop app on a small VPS. Her `compose.yml` has `web` and `db` (Postgr
 1. **Install `pgb` and make a folder,** as the user that runs Docker:
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/install.sh | sh
+   curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | sh
    mkdir -p ~/backups/shop && cd ~/backups/shop
    pgb init
    nano .env

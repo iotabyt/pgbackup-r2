@@ -18,7 +18,7 @@ You need Docker, and nothing else. `pgb` is a small script around `docker run`. 
    <TabItem label="bash, zsh, fish">
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/install.sh | sh
+   curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | sh
    ```
 
    If `~/.local/bin` isn't on your `PATH`, the installer prints the line to add for your shell. See [Install pgb](/start/install/) for details.
@@ -27,7 +27,7 @@ You need Docker, and nothing else. `pgb` is a small script around `docker run`. 
    <TabItem label="PowerShell">
 
    ```powershell
-   $d = Join-Path $HOME .pgb; New-Item -ItemType Directory -Force $d, (Split-Path $PROFILE) | Out-Null; irm https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/pgb.ps1 -OutFile (Join-Path $d pgb.ps1); if ("$(Get-Content -Raw $PROFILE -ErrorAction Ignore)" -notmatch 'function pgb ') { Add-Content $PROFILE "function pgb { & '$(Join-Path $d pgb.ps1)' @args }" }; . $PROFILE
+   $d = Join-Path $HOME .pgb; New-Item -ItemType Directory -Force $d, (Split-Path $PROFILE) | Out-Null; irm https://pgbackup-r2.iotabyt.com/install.ps1 -OutFile (Join-Path $d pgb.ps1); if ("$(Get-Content -Raw $PROFILE -ErrorAction Ignore)" -notmatch 'function pgb ') { Add-Content $PROFILE "function pgb { & '$(Join-Path $d pgb.ps1)' @args }" }; . $PROFILE
    ```
 
    </TabItem>

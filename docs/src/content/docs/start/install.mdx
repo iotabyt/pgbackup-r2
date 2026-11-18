@@ -16,14 +16,14 @@ import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
 <TabItem label="bash">
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/install.sh | sh
+curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | sh
 ```
 
 </TabItem>
 <TabItem label="zsh">
 
 ```zsh
-curl -fsSL https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/install.sh | sh
+curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | sh
 ```
 
 zsh is the default shell on macOS.
@@ -32,14 +32,14 @@ zsh is the default shell on macOS.
 <TabItem label="fish">
 
 ```fish
-curl -fsSL https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/install.sh | sh
+curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | sh
 ```
 
 </TabItem>
 <TabItem label="PowerShell">
 
 ```powershell
-$d = Join-Path $HOME .pgb; New-Item -ItemType Directory -Force $d, (Split-Path $PROFILE) | Out-Null; irm https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/pgb.ps1 -OutFile (Join-Path $d pgb.ps1); if ("$(Get-Content -Raw $PROFILE -ErrorAction Ignore)" -notmatch 'function pgb ') { Add-Content $PROFILE "function pgb { & '$(Join-Path $d pgb.ps1)' @args }" }; . $PROFILE
+$d = Join-Path $HOME .pgb; New-Item -ItemType Directory -Force $d, (Split-Path $PROFILE) | Out-Null; irm https://pgbackup-r2.iotabyt.com/install.ps1 -OutFile (Join-Path $d pgb.ps1); if ("$(Get-Content -Raw $PROFILE -ErrorAction Ignore)" -notmatch 'function pgb ') { Add-Content $PROFILE "function pgb { & '$(Join-Path $d pgb.ps1)' @args }" }; . $PROFILE
 ```
 
 This saves `pgb.ps1` in `~\.pgb` and adds a `pgb` function to your `$PROFILE`. Running it again updates the script without adding the function twice. It works in Windows PowerShell 5.1 and PowerShell 7, on any OS.
@@ -60,6 +60,27 @@ Check it:
 ```bash
 pgb version
 ```
+
+## Install without the short URL
+
+The install lines above download from `pgbackup-r2.iotabyt.com`, which redirects to the scripts on GitHub. Some company proxies block redirects. If yours does, download straight from GitHub instead:
+
+<Tabs syncKey="shell">
+<TabItem label="bash, zsh, fish">
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/install.sh | sh
+```
+
+</TabItem>
+<TabItem label="PowerShell">
+
+```powershell
+$d = Join-Path $HOME .pgb; New-Item -ItemType Directory -Force $d, (Split-Path $PROFILE) | Out-Null; irm https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/pgb.ps1 -OutFile (Join-Path $d pgb.ps1); if ("$(Get-Content -Raw $PROFILE -ErrorAction Ignore)" -notmatch 'function pgb ') { Add-Content $PROFILE "function pgb { & '$(Join-Path $d pgb.ps1)' @args }" }; . $PROFILE
+```
+
+</TabItem>
+</Tabs>
 
 ## Put `~/.local/bin` on your PATH
 

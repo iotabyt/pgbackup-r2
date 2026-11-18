@@ -11,7 +11,8 @@
     "build": "astro check && astro build && node scripts/csp.mjs",
     "preview": "wrangler dev",
     "deploy": "npm run build && wrangler deploy",
-    "astro": "astro"
+    "astro": "astro",
+    "check:install-urls": "node scripts/check-install-urls.mjs"
   },
   "dependencies": {
     "@astrojs/starlight": "0.43.1",

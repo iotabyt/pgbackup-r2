@@ -1,6 +1,6 @@
 #!/bin/sh
 # Installs pgb into ~/.local/bin:
-#   curl -fsSL https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/install.sh | sh
+#   curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | sh
 # It never edits your shell's startup files. If ~/.local/bin isn't on your PATH, it prints
 # the line to add for your shell ($SHELL). pgb itself runs with bash, from any shell.
 set -eu
