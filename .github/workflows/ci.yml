@@ -1,0 +1,102 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: pw
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install postgresql-client-16 (PGDG) and age
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/pgdg*.list
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client-16 age
+          # Put the v16 tools first, whatever else the runner image has installed.
+          echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
+
+      - uses: astral-sh/setup-uv@v6
+
+      - run: uv sync --locked
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - name: pytest
+        run: uv run pytest -v
+        env:
+          PGBACKUP_TEST_URL: postgresql://postgres:pw@localhost:5432/postgres
+
+  image:
+    needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: ["16", "17", "18"]
+    env:
+      IMAGE: ghcr.io/iotabyt/pgbackup-r2
+      PUSH: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build pg${{ matrix.pg }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          build-args: PG_MAJOR=${{ matrix.pg }}
+          load: true
+          tags: pgbackup-r2:pg${{ matrix.pg }}
+          cache-from: type=gha,scope=pg${{ matrix.pg }}
+          cache-to: type=gha,mode=max,scope=pg${{ matrix.pg }}
+
+      - name: Smoke test
+        run: |
+          docker run --rm pgbackup-r2:pg${{ matrix.pg }} --version
+          docker run --rm pgbackup-r2:pg${{ matrix.pg }} keygen | grep -q '^AGE_RECIPIENTS=age1'
+          docker run --rm --entrypoint pg_dump pgbackup-r2:pg${{ matrix.pg }} --version \
+            | grep -q " ${{ matrix.pg }}\."
+
+      - name: Log in to GHCR
+        if: env.PUSH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push pg${{ matrix.pg }} and ${{ github.ref_name }}-pg${{ matrix.pg }}
+        if: env.PUSH == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          build-args: PG_MAJOR=${{ matrix.pg }}
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:pg${{ matrix.pg }}
+            ${{ env.IMAGE }}:${{ github.ref_name }}-pg${{ matrix.pg }}
+          cache-from: type=gha,scope=pg${{ matrix.pg }}

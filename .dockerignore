@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+.env
+*.env
+key.txt
+*.key
+*.age
+*.dump
+dist
+build
+**/__pycache__
+.pytest_cache
+.ruff_cache
+examples
+tests

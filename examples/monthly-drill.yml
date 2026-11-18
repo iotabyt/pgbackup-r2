@@ -1,0 +1,62 @@
+# Monthly restore drill in GitHub Actions. Copy to .github/workflows/ in a PRIVATE repo.
+#
+# Secrets to add (Settings > Secrets and variables > Actions):
+#   AGE_IDENTITY          the AGE-SECRET-KEY-1... private key
+#   R2_ENDPOINT           https://<account-id>.r2.cloudflarestorage.com
+#   R2_BUCKET             the bucket name
+#   R2_ACCESS_KEY_ID      an R2 token with read access to the bucket
+#   R2_SECRET_ACCESS_KEY
+#   DRILL_FAIL_URL        optional: a heartbeat URL that gets the FAIL summary
+#
+# The private key goes straight into the container as an environment variable:
+# there's no key file to write or clean up.
+
+name: monthly backup drill
+
+on:
+  schedule:
+    - cron: "17 5 1 * *" # 05:17 UTC on the 1st of every month
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drill:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        prefix: [labpadi, otherapp] # one entry per app (its S3_PREFIX)
+
+    services:
+      scratch:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: scratch
+          POSTGRES_DB: drill
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d drill"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+
+    steps:
+      - name: Drill ${{ matrix.prefix }}
+        env:
+          AGE_IDENTITY: ${{ secrets.AGE_IDENTITY }}
+          S3_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          S3_BUCKET: ${{ secrets.R2_BUCKET }}
+          S3_PREFIX: ${{ matrix.prefix }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          DRILL_DATABASE_URL: postgresql://postgres:scratch@localhost:5432/drill
+          HEARTBEAT_FAIL_URL: ${{ secrets.DRILL_FAIL_URL }}
+        # `-e NAME` with no value passes the variable through, so secrets never appear
+        # on the command line.
+        run: |
+          docker run --rm --network host \
+            -e AGE_IDENTITY -e S3_ENDPOINT -e S3_BUCKET -e S3_PREFIX \
+            -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
+            -e DRILL_DATABASE_URL -e HEARTBEAT_FAIL_URL \
+            ghcr.io/iotabyt/pgbackup-r2:pg16 drill

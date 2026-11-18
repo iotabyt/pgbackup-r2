@@ -1,0 +1,24 @@
+# Secrets and backups: never commit these
+.env
+*.env
+!.env.example
+key.txt
+*.key
+*.age
+*.dump
+*.dump.partial
+
+# examples/drill output folder (keep the folder itself)
+examples/drill/out/*
+!examples/drill/out/.gitkeep
+
+# Python / uv
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
