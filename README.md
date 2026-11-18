@@ -32,12 +32,47 @@ The server only ever holds the public key. If someone steals the server or the b
 
 ## Quick start (Docker only)
 
-Every command below is a `docker run` or `docker compose` command. Where PowerShell and bash differ, both are shown.
+You only need Docker. The commands below use `pgb`, a short wrapper around `docker run`. Where PowerShell and bash differ, both are shown.
+
+### 0. Install the `pgb` shortcut
+
+bash (Linux, macOS, WSL):
+
+```bash
+mkdir -p ~/.local/bin && curl -fsSL https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/pgb -o ~/.local/bin/pgb && chmod +x ~/.local/bin/pgb
+```
+
+(`~/.local/bin` must be on your `PATH`. On macOS it often isn't. Add `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc`.)
+
+PowerShell (Windows):
+
+```powershell
+New-Item -ItemType Directory -Force (Split-Path $PROFILE) | Out-Null; irm https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/pgb.ps1 | Add-Content $PROFILE; . $PROFILE
+```
+
+(If PowerShell refuses to load your profile, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.)
+
+`pgb <command>` runs the image with the `.env` from the folder you're in. For example, on Linux, `pgb verify` is:
+
+```bash
+docker run --rm -it --env-file .env -v "$PWD/out:/out" --user "$(id -u):$(id -g)" \
+  ghcr.io/iotabyt/pgbackup-r2:pg16 verify
+```
+
+What `pgb` adds to `docker run`:
+
+- **`.env`:** used if the current folder has one.
+- **Image tag:** taken from `PG_MAJOR` in `.env` (default 16).
+- **Output folder:** `./out` is mounted at `/out` (`decrypt` creates it).
+- **Terminal:** `-it` is added when you're at one.
+- **User:** on Linux, the container runs as you, so files in `./out` are yours.
+
+If you'd rather not install anything, type the `docker run` line yourself. To pass extra Docker options, set `PGB_DOCKER_ARGS`. For example, use `PGB_DOCKER_ARGS="--network host"` to reach a database on `localhost` (Linux).
 
 ### 1. Make a key pair
 
 ```
-docker run --rm -it ghcr.io/iotabyt/pgbackup-r2:pg16 keygen
+pgb keygen
 ```
 
 This prints a public key for the server and a private key for your laptop. Nothing is written to disk. **Save the private key in your password manager now.** If you lose it, nobody can open your backups, including you.
@@ -45,10 +80,10 @@ This prints a public key for the server and a private key for your laptop. Nothi
 For copy-paste friendly output, add `--plain`. The keys then come out exactly as they go in a `.env` file:
 
 ```
-docker run --rm ghcr.io/iotabyt/pgbackup-r2:pg16 keygen --plain
+pgb keygen --plain
 ```
 
-Use the image tag that matches your Postgres major version (`pg16`, `pg17` or `pg18`). See [Good to know](#good-to-know).
+For backups and restores, the image tag must match your Postgres major version (`pg16`, `pg17` or `pg18`). `pgb` takes it from `PG_MAJOR` in `.env`. See [Good to know](#good-to-know).
 
 ### 2. Create an R2 bucket and an API token
 
@@ -145,15 +180,15 @@ kamal accessory logs backup
 
 ### 4. Prove it works, from your laptop
 
-Copy the [`examples/drill`](examples/drill) folder to your laptop, fill in `.env` from `.env.example` (endpoint, bucket, prefix, token, and your **private** key), and run:
+Copy the [`examples/drill`](examples/drill) folder to your laptop, fill in `.env` from `.env.example`, and run the commands below. `.env` needs `PG_MAJOR` (your server's major version), the endpoint, bucket, prefix and token, and your **private** key.
 
 ```
-docker compose run --rm drill verify
+pgb verify
 docker compose run --rm drill
 docker compose down -v
 ```
 
-`verify` downloads the latest backup, checks the checksum, decrypts it, and lists the tables inside, all in a few seconds and with no database. `drill` does the full restore into a throwaway Postgres and compares every table's row count. `down -v` deletes the scratch database.
+`pgb verify` downloads the latest backup, checks the checksum, decrypts it, and lists the tables inside, all in a few seconds and with no database. The drill needs a throwaway Postgres next to it, so it runs through the folder's `compose.yml`: it restores into the scratch database and compares every table's row count. `down -v` deletes the scratch database.
 
 To fill in `.env` in PowerShell:
 
@@ -171,7 +206,7 @@ cp .env.example .env
 nano .env
 ```
 
-[`examples/drill/README.md`](examples/drill/README.md) has the details, including `decrypt` into a normal folder.
+[`examples/drill/README.md`](examples/drill/README.md) has the details, including `pgb decrypt latest --out /out/backup.dump` into a normal folder. Add `DATABASE_URL` and `AGE_RECIPIENTS` to the same `.env`, and the folder can also take backups from your laptop with `pgb backup`.
 
 ### 5. Optional: a monthly drill in GitHub Actions
 
@@ -188,8 +223,10 @@ RESTORE_DATABASE_URL=postgresql://user:pw@host:5432/app_restored
 Then run:
 
 ```
-docker run --rm -it --env-file .env ghcr.io/iotabyt/pgbackup-r2:pg16 restore latest
+pgb restore latest
 ```
+
+The target has to be reachable from inside the container. A database on your own machine is not `localhost` there. On Linux, use `PGB_DOCKER_ARGS="--network host"`. With Docker Desktop, use `host.docker.internal` as the host.
 
 `--target URL` still works and takes precedence over `RESTORE_DATABASE_URL`, but prefer the env var. Anything on a command line, the password included, is visible to every user on the machine who runs `ps`, and it ends up in your shell history too. From `.env`, the URL only ever lives in environment variables, and `pg_restore` gets the password through `PGPASSWORD` either way.
 
@@ -230,7 +267,7 @@ Use `export VAR=value` lines in the env file when you source it like this. Outsi
 
 Global flags: `--plain` (no colour, spinners or tables), `-q` (warnings only), `--version`, `--help`.
 
-Output is interactive when stdout is a terminal and `NO_COLOR` isn't set. Otherwise it's plain. `schedule` is always plain. Docker only gives a container a terminal with `-it` (`docker compose run` does it by default).
+Output is interactive when stdout is a terminal and `NO_COLOR` isn't set. Otherwise it's plain. `schedule` is always plain. Docker only gives a container a terminal with `-it`. `pgb` and `docker compose run` add it for you.
 
 ### Environment variables
 
@@ -258,7 +295,7 @@ Connection details reach `pg_dump`, `pg_restore` and `psql` as `PGHOST`/`PGPASSW
 
 ## Good to know
 
-- **Match the image to your Postgres major version.** Use `pg16` for a PG 16 server, and so on. `pg_dump` refuses to dump a server newer than itself, and `pg_dump`/`pg_restore` 17+ emit `SET transaction_timeout`, which a PG 16 server rejects on restore. That's why the images are tagged `pg16`, `pg17` and `pg18`. When you upgrade Postgres, switch the tag.
+- **Match the image to your Postgres major version.** Use `pg16` for a PG 16 server, and so on. `pg_dump` refuses to dump a server newer than itself, and `pg_dump`/`pg_restore` 17+ emit `SET transaction_timeout`, which a PG 16 server rejects on restore. That's why the images are tagged `pg16`, `pg17` and `pg18`. A dump from a newer major version won't restore into an older server. When you upgrade Postgres, switch the tag (and `PG_MAJOR` in `examples/drill/.env`).
 - **Logical backups only.** You get a snapshot of each nightly run, not point-in-time recovery. For PITR, or databases too big to dump and restore in a reasonable time, use [pgBackRest](https://pgbackrest.org) or [WAL-G](https://github.com/wal-g/wal-g).
 - **Roles and ownership aren't restored.** Dumps use `--no-owner --no-acl`, so restored objects belong to the user you restore as. Recreate roles and grants yourself.
 - **Lose the private key and the backups are gone.** There's no recovery. Consider a second recipient: generate another key pair, store that private key offline (printed, or on a USB stick in a safe), and list both public keys in `AGE_RECIPIENTS=age1first...,age1second...`.

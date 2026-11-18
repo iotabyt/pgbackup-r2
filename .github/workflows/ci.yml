@@ -61,7 +61,7 @@ jobs:
       IMAGE: ghcr.io/iotabyt/pgbackup-r2
       PUSH: ${{ startsWith(github.ref, 'refs/tags/v') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v3
 
       - name: Build pg${{ matrix.pg }}

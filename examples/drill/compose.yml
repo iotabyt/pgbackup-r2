@@ -1,18 +1,20 @@
-# A restore drill on your laptop with nothing but Docker.
+# Backups, restore drills and decrypts from your laptop with nothing but Docker.
 #
 #   docker compose run --rm drill            # restore the latest backup and check row counts
-#   docker compose run --rm drill verify     # quick check, no database needed
-#   docker compose run --rm drill decrypt latest --out /out/backup.dump
 #   docker compose down -v                   # throw the scratch database away
 #
-# Settings come from .env (copy .env.example). Match both images to your Postgres major
-# version: postgres:17 + pgbackup-r2:pg17, and so on.
+# Everything else runs with `pgb` (see the main README) from this folder:
+#   pgb verify | pgb list | pgb backup | pgb decrypt latest --out /out/backup.dump
+# or without it: docker compose run --rm drill verify (and so on).
+#
+# Settings come from .env (copy .env.example). PG_MAJOR in .env picks both images and must
+# match your server's major version: PG_MAJOR=17 gives postgres:17 + pgbackup-r2:pg17.
 
 name: pgbackup-r2-drill
 
 services:
   scratch:
-    image: postgres:16
+    image: postgres:${PG_MAJOR:-16}
     environment:
       POSTGRES_PASSWORD: scratch-only-throwaway
       POSTGRES_DB: drill
@@ -24,7 +26,8 @@ services:
     # No published ports: only the drill container can reach it.
 
   drill:
-    image: ${PGBACKUP_IMAGE:-ghcr.io/iotabyt/pgbackup-r2:pg16}
+    # PGBACKUP_IMAGE is only for testing a locally built image.
+    image: ${PGBACKUP_IMAGE:-ghcr.io/iotabyt/pgbackup-r2:pg${PG_MAJOR:-16}}
     env_file: .env
     environment:
       DRILL_DATABASE_URL: postgresql://postgres:scratch-only-throwaway@scratch:5432/drill

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# pgb: run pgbackup-r2 through Docker, using ./.env and ./out. https://github.com/iotabyt/pgbackup-r2
+#   pgb keygen | pgb list | pgb verify | pgb decrypt latest --out /out/backup.dump | pgb --help
+# PG_MAJOR (from .env, default 16) picks the image. PGB_DOCKER_ARGS adds docker options,
+# e.g. PGB_DOCKER_ARGS="--network host". PGB_IMAGE overrides the image.
+set -euo pipefail
+export MSYS_NO_PATHCONV=1 # Git Bash on Windows: don't rewrite /out
+pg=16 args=()
+if [[ -f .env ]]; then
+  args+=(--env-file .env)
+  v=$(sed -n 's/^PG_MAJOR=\([0-9][0-9]*\).*$/\1/p' .env | tail -n 1)
+  pg=${v:-16}
+fi
+pg=${PG_MAJOR:-$pg}
+if [[ -t 0 && -t 1 ]]; then args+=(-it); fi
+if [[ " $* " == *" decrypt "* ]]; then mkdir -p out; fi
+if [[ -d out ]]; then args+=(-v "$PWD/out:/out"); fi
+if [[ "$(uname -s)" == Linux ]]; then args+=(--user "$(id -u):$(id -g)"); fi
+# shellcheck disable=SC2206 # word-splitting PGB_DOCKER_ARGS is intended
+if [[ -n "${PGB_DOCKER_ARGS:-}" ]]; then args+=($PGB_DOCKER_ARGS); fi
+exec docker run --rm ${args[@]+"${args[@]}"} "${PGB_IMAGE:-ghcr.io/iotabyt/pgbackup-r2:pg$pg}" "$@"
