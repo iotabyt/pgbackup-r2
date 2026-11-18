@@ -1,0 +1,157 @@
+---
+title: Install pgb
+description: Install the pgb command for bash, zsh, fish or PowerShell, fix PATH, update and uninstall.
+next:
+  link: /start/quick-start/
+  label: Quick start
+---
+
+import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
+
+`pgb` is a short script around `docker run`. Docker is the only thing it needs: no Python, `pg_dump` or `age` on your machine.
+
+## Install
+
+<Tabs syncKey="shell">
+<TabItem label="bash">
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/install.sh | sh
+```
+
+</TabItem>
+<TabItem label="zsh">
+
+```zsh
+curl -fsSL https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/install.sh | sh
+```
+
+zsh is the default shell on macOS.
+
+</TabItem>
+<TabItem label="fish">
+
+```fish
+curl -fsSL https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/install.sh | sh
+```
+
+</TabItem>
+<TabItem label="PowerShell">
+
+```powershell
+$d = Join-Path $HOME .pgb; New-Item -ItemType Directory -Force $d, (Split-Path $PROFILE) | Out-Null; irm https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/pgb.ps1 -OutFile (Join-Path $d pgb.ps1); if ("$(Get-Content -Raw $PROFILE -ErrorAction Ignore)" -notmatch 'function pgb ') { Add-Content $PROFILE "function pgb { & '$(Join-Path $d pgb.ps1)' @args }" }; . $PROFILE
+```
+
+This saves `pgb.ps1` in `~\.pgb` and adds a `pgb` function to your `$PROFILE`. Running it again updates the script without adding the function twice. It works in Windows PowerShell 5.1 and PowerShell 7, on any OS.
+
+If PowerShell refuses to run scripts:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+</TabItem>
+</Tabs>
+
+The bash, zsh and fish installer puts `pgb` in `~/.local/bin`. **`pgb` itself always runs with bash,** so it behaves the same whichever shell you type it in.
+
+Check it:
+
+```bash
+pgb version
+```
+
+## Put `~/.local/bin` on your PATH
+
+The installer checks your `PATH`. If `~/.local/bin` isn't on it, the installer prints the line for your shell (from `$SHELL`). It never edits your shell's files itself. Run the line once:
+
+<Tabs syncKey="shell">
+<TabItem label="bash">
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+```
+
+On macOS, terminals start login shells, which read `~/.bash_profile` instead. Use that file in place of `~/.bashrc`.
+
+</TabItem>
+<TabItem label="zsh">
+
+```zsh
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+```
+
+</TabItem>
+<TabItem label="fish">
+
+```fish
+fish_add_path ~/.local/bin
+```
+
+</TabItem>
+<TabItem label="PowerShell">
+
+Nothing to do: `pgb` is a function in your `$PROFILE`, not a file on `PATH`.
+
+</TabItem>
+</Tabs>
+
+## macOS and bash 3.2
+
+macOS ships bash 3.2 from 2007, and `pgb` works with it. It avoids everything newer: associative arrays, `mapfile`, `${var,,}` and `|&`. CI runs `pgb` under bash 3.2 to keep it that way.
+
+## Update
+
+- **`pgb` itself:** run the install line again.
+- **The image:** run `pgb update`. It pulls the image for your `PG_MAJOR`, prints the old and new versions, and tells you if `pgb nightly` needs a restart to use it.
+
+## Uninstall
+
+<Tabs syncKey="shell">
+<TabItem label="bash, zsh, fish">
+
+```bash
+pgb nightly stop                      # in each folder where you started it
+rm ~/.local/bin/pgb
+docker image rm ghcr.io/iotabyt/pgbackup-r2:pg16   # and :pg17, :pg18 if you pulled them
+```
+
+</TabItem>
+<TabItem label="PowerShell">
+
+```powershell
+pgb nightly stop                      # in each folder where you started it
+Remove-Item -Recurse (Join-Path $HOME .pgb)
+notepad $PROFILE                      # delete the line "function pgb { ... }"
+docker image rm ghcr.io/iotabyt/pgbackup-r2:pg16
+```
+
+</TabItem>
+</Tabs>
+
+Your backups stay in the bucket, and your `.env` files stay where they are.
+
+## Without Docker
+
+If you'd rather not use Docker, install the Python package:
+
+```bash
+pip install pgbackup-r2      # or: uv tool install pgbackup-r2
+```
+
+It needs `pg_dump`, `pg_restore` and `psql` from the same Postgres major version as your server, plus `age` (`apt install age`, `brew install age`), all on `PATH`. Set the [environment variables](/reference/environment/) yourself, and run `pgbackup-r2 backup` (and the other [CLI commands](/reference/cli/)) from plain cron:
+
+```text
+# /etc/cron.d/pgbackup-r2
+0 2 * * *  backup  . /etc/pgbackup-r2.env && pgbackup-r2 backup
+```
+
+Use `export VAR=value` lines in the env file when you source it like this. Outside a terminal, output is plain log lines, so cron mail and log files stay readable.
+
+<Aside>
+`pgb` only exists for the Docker route. Without Docker, the commands are `pgbackup-r2 backup`, `pgbackup-r2 drill` and so on, and you provide the drill's scratch database (`DRILL_DATABASE_URL`) yourself.
+</Aside>
+
+## Next
+
+**[Quick start](/start/quick-start/)**: set up a folder, back up and drill.

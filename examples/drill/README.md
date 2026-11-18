@@ -1,4 +1,6 @@
-# Backups and restore drills with nothing but Docker
+# Restore drills with Docker Compose
+
+> **Most people should use `pgb drill` instead.** It does the same thing with no compose file: see the [Quick start](https://pgbackup-r2.iotabyt.com/start/quick-start/). This folder is for people who'd rather use plain `docker compose`.
 
 This folder restores your latest backup into a throwaway Postgres and checks that every table has the row count recorded at backup time. It works the same on Windows, macOS and Linux. You don't need to install `age`, `pg_dump` or Python.
 
@@ -99,7 +101,7 @@ docker compose run --rm drill drill 2026-11-01T020000Z
 
 ## Other things this folder can do
 
-These use `pgb`, the short wrapper from the main README's [Quick start](../../README.md#0-install-the-pgb-shortcut). Run them from this folder so `pgb` picks up its `.env`. The drill itself stays on `docker compose`, because it needs the scratch database next to it.
+These use `pgb`, the short wrapper from [Install pgb](https://pgbackup-r2.iotabyt.com/start/install/). Run them from this folder so `pgb` picks up its `.env`. `pgb drill` works here too: it starts its own throwaway database and ignores `compose.yml`.
 
 If you haven't installed `pgb`, `docker compose run --rm drill <command>` does the same. On Linux, add `--user "$(id -u):$(id -g)"` for `decrypt`, so you can write to `./out`.
 
@@ -123,7 +125,7 @@ pgb list
 
 Backing up and drilling from the same `.env` is safe. The drill only ever restores into the scratch database, and it refuses to run if `DRILL_DATABASE_URL` is the same database as `DATABASE_URL`.
 
-For nightly backups, run the image on your server instead (see the main README). A laptop that's asleep at 02:00 won't take them.
+For nightly backups, run `pgb nightly start` on a server that's always on, or one of the other setups in the [guides](https://pgbackup-r2.iotabyt.com/guides/vps/). A laptop that's asleep at 02:00 won't take them.
 
 ### Check a backup without a database
 

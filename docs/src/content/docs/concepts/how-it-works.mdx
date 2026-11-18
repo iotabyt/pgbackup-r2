@@ -1,0 +1,53 @@
+---
+title: How it works
+description: pg_dump into age into the bucket, the manifest, the checksum, and what a drill checks.
+---
+
+import HowItWorks from "../../../components/HowItWorks.astro";
+
+A backup and a drill are two halves of one loop. The backup runs where the database is, with only the public key. The drill runs somewhere else, with the private key, and proves the backup comes back.
+
+<HowItWorks />
+
+## A backup
+
+1. **Count every table's rows.** One query over `pg_stat_user_tables` builds an exact `count(*)` for each table, so the manifest has real numbers, not estimates.
+2. **Dump.** `pg_dump -Fc --no-owner --no-acl` writes Postgres's custom format: compressed, and readable by `pg_restore` table by table.
+3. **Encrypt in the same pipe.** `pg_dump`'s output goes straight into `age`, encrypted to every public key in `AGE_RECIPIENTS`. The only file written is the encrypted one, in a private temporary folder (mode 0700). The plain dump never touches disk. Both exit codes are checked, so a half-finished dump never looks like a good one.
+4. **Upload.** The file goes to `<prefix>/<stamp>.dump.age`, with three values in the object's metadata:
+   - `sha256`, the checksum of the encrypted file
+   - the server's Postgres version
+   - the tool's version
+5. **Write the manifest.** `<prefix>/<stamp>.manifest.age` holds the row counts, the checksum, the size and the versions as JSON, also encrypted to `AGE_RECIPIENTS`. Table names can be sensitive too.
+6. **Tidy up.** With `TIERS`, server-side copies go to the other tiers. Then come pruning (if on) and the heartbeat ping.
+
+The stamp is the UTC time the backup started, as `2026-11-18T020000Z`, so names sort in time order.
+
+## A drill
+
+1. **Pick a backup:** the newest, or the one you name.
+2. **Download it and check the `sha256`.** A mismatch means the file is corrupt or altered, and the drill stops there.
+3. **Decrypt it** with the private key, and check that what comes out is a `pg_dump` archive (it starts with `PGDMP`).
+4. **Restore it** into a scratch database with `pg_restore --clean --if-exists --exit-on-error`.
+5. **Count every table's rows again,** and compare them with the manifest. These all count as problems:
+   - a missing table
+   - an extra table
+   - a table off by more than `DRILL_TOLERANCE`
+6. **Report** PASS or FAIL, record it in `<prefix>/.drills/`, and ping the heartbeat.
+
+`verify` does steps 1–3 and lists the tables in the dump, with no database at all. It's a quick check that a backup opens. Only a drill proves it restores.
+
+## What stays where
+
+| | Server (backups) | Laptop or CI (drills, restores) | Bucket |
+|---|---|---|---|
+| Public key (`age1…`) | yes | yes | no |
+| Private key (`AGE-SECRET-KEY-1…`) | **never** | yes | no |
+| Database password | yes | only for restores | no |
+| Plain dump | never | only with `decrypt` | never |
+
+## Passwords and the process list
+
+Connection details reach `pg_dump`, `pg_restore` and `psql` as `PGHOST`, `PGPASSWORD` and so on, in their environment. They're never passed as arguments, so passwords don't show up in `ps`. Inherited `PG*` variables are cleared first, so a stray `PGHOST` can't redirect a backup. Logged URLs show the password as `***`.
+
+`pgb` follows the same rule. It passes rewritten URLs and the drill's random password to Docker by name (`-e VAR`), never as `-e VAR=value`.

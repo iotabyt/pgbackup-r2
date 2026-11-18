@@ -7,6 +7,7 @@ never on its command line.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import tempfile
 from collections.abc import Sequence
@@ -124,11 +125,60 @@ def _with_version_hint(fn):
         else:
             raise
         raise CommandError(
-            f"{text}. {hint}. Use the image tag that matches your Postgres major version "
-            "(e.g. pg16) for both backups and restores"
+            f"{text}. {hint}",
+            hint="Set PG_MAJOR in .env to your server's major version (SHOW server_version;), "
+            "so backups and restores use the matching image",
         ) from None
 
 
 def is_pg_dump(path: str) -> bool:
     with open(path, "rb") as f:
         return f.read(len(PGDMP_MAGIC)) == PGDMP_MAGIC
+
+
+_UNRESOLVED = re.compile(
+    r'could not translate host name "([^"]+)"|'
+    r"failed to resolve host '([^']+)'|"
+    r"Name or service not known|nodename nor servname"
+)
+
+
+def connection_hint(text: str, url: str | None = None) -> str | None:
+    """Plain words and fixes for the two common ways a container can't reach the database."""
+    m = _UNRESOLVED.search(text)
+    if m:
+        host = m.group(1) or m.group(2)
+        if not host and url:
+            host = parse_url(url).host
+        name = f'"{host}"' if host else "the database host"
+        return (
+            f"Nothing called {name} can be found from inside this container. A name like that "
+            "usually belongs to a Docker Compose service, and only containers on the same Docker "
+            "network can see it. Fixes: (1) if the database runs in Docker Compose, add "
+            "PGB_NETWORK=<project>_default to .env (`docker network ls` lists the names); "
+            "(2) if it runs on this machine with a published port, use localhost as the host "
+            "(pgb then reaches it through host networking or host.docker.internal)"
+        )
+    if "password authentication failed" in text:
+        return (
+            "The user or password in DATABASE_URL is wrong. Copy the URL again from where "
+            "the database lives"
+        )
+    if re.search(r'database "[^"]+" does not exist', text):
+        return "The database name at the end of DATABASE_URL doesn't exist on that server"
+    if "timeout expired" in text or "timed out" in text:
+        return (
+            "Nothing answered in time: check the host and port in DATABASE_URL, and that the "
+            "database accepts connections from where pgb runs (firewall, IP allowlist)"
+        )
+    if "SSL" in text and ("required" in text or "no encryption" in text or "pg_hba" in text):
+        return "The server wants TLS: add ?sslmode=require to the end of DATABASE_URL"
+    if "Connection refused" in text and url:
+        host = parse_url(url).host or ""
+        if host in ("localhost", "127.0.0.1", "::1"):
+            return (
+                "Inside a container, localhost is the container itself, not your machine. "
+                "Run through pgb, which handles this, or use host.docker.internal (Docker "
+                "Desktop) or --network host (Linux)"
+            )
+    return None

@@ -1,0 +1,18 @@
+---
+title: Changelog
+description: What changed in each release of pgbackup-r2.
+# The versions come from the imported file, which the table of contents can't see.
+tableOfContents: false
+editUrl: https://github.com/iotabyt/pgbackup-r2/edit/main/CHANGELOG.md
+---
+
+import { Content as Changelog } from "../../../../CHANGELOG.md";
+
+<div class="pgb-changelog">
+  <Changelog />
+</div>
+
+<style>{`
+  /* CHANGELOG.md starts with its own "# Changelog": the page title already says it. */
+  .pgb-changelog > h1:first-child { display: none; }
+`}</style>

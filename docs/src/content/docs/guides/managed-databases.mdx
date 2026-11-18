@@ -1,0 +1,92 @@
+---
+title: Managed databases
+description: Kofi's setup. A Neon or Supabase database, backed up nightly by GitHub Actions.
+next:
+  link: /guides/monthly-drills/
+  label: Monthly drills
+---
+
+import { Steps, Aside } from "@astrojs/starlight/components";
+
+Kofi's app runs on a platform with a managed Postgres 17 on Neon. There's no server of his own to run a container on. So a scheduled GitHub Actions workflow takes the backups, and his laptop runs the drills.
+
+<Steps>
+
+1. **On his laptop, set everything up and check it once.**
+
+   ```bash
+   mkdir ~/backups/kofi-app && cd ~/backups/kofi-app
+   pgb init
+   pgb keygen                # private key -> password manager and this .env
+   ```
+
+   In `.env`:
+
+   - **`DATABASE_URL`** is a direct connection, ending in `?sslmode=require`:
+     - **Neon:** the host without `-pooler`.
+     - **Supabase:** the *Session pooler* string, port 5432 (see below).
+   - **`PG_MAJOR=17`**, the R2 settings and `AGE_RECIPIENTS`. On this laptop, also uncomment `AGE_IDENTITY` with the private key.
+
+   ```bash
+   pgb doctor                # all ✓: his laptop can reach Neon and R2, and the keys match
+   pgb backup && pgb drill   # the whole round trip, once, by hand
+   ```
+
+2. **In a private GitHub repo,** copy [`examples/nightly-backup.yml`](https://github.com/iotabyt/pgbackup-r2/blob/main/examples/nightly-backup.yml) to `.github/workflows/`. Set the image tag (`pg17`) and the prefix. Then add these secrets under *Settings → Secrets and variables → Actions*:
+   - `DATABASE_URL`
+   - `AGE_RECIPIENTS`, the **public** key only
+   - `R2_ENDPOINT` and `R2_BUCKET`
+   - `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`
+   - `HEARTBEAT_URL` (and optionally `HEARTBEAT_FAIL_URL`)
+
+3. **Run it once by hand:** **Actions** → *nightly backup* → **Run workflow**. Back on the laptop, `pgb list` shows the new backup, and `pgb verify` opens it.
+
+</Steps>
+
+From then on, GitHub backs up every night. A failed run emails him, and the heartbeat tells him if the schedule ever stops.
+
+## The workflow
+
+The core of it:
+
+```yaml
+on:
+  schedule:
+    - cron: "17 2 * * *"
+jobs:
+  backup:
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          AGE_RECIPIENTS: ${{ secrets.AGE_RECIPIENTS }}   # the PUBLIC key only
+          S3_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          S3_BUCKET: ${{ secrets.R2_BUCKET }}
+          S3_PREFIX: myapp
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          docker run --rm -e DATABASE_URL -e AGE_RECIPIENTS -e S3_ENDPOINT -e S3_BUCKET \
+            -e S3_PREFIX -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
+            ghcr.io/iotabyt/pgbackup-r2:pg17 backup
+```
+
+- **Only the public key goes in the secrets.** The workflow can write backups but never read them. The private key stays in the password manager and on the laptop.
+- **`-e NAME` with no value** passes the variable through from the step's environment, so secrets never appear on a command line.
+- **Set a heartbeat.** GitHub disables scheduled workflows in repos with no activity for 60 days, and scheduled runs can start some minutes late. A heartbeat notices when backups stop.
+
+## The database must accept outside connections
+
+GitHub's runners connect from changing addresses all over Azure, so an IP allowlist won't let them in unless it allows them all.
+
+- **Neon:** use the direct host, without `-pooler`. `pg_dump` can't work through a transaction-mode pooler.
+- **Supabase:** the direct host (`db.<ref>.supabase.co`) is IPv6-only, and GitHub's runners have no IPv6. Use the **Session pooler** connection string (port 5432), not the **Transaction pooler** (port 6543).
+- **Crunchy Bridge, RDS and others:** the database needs a public endpoint with TLS, and a user that can read every table.
+
+<Aside type="caution">
+Drills need the **private** key. Run them from your laptop, or from a separate workflow in a separate repo or environment: see [Monthly drills](/guides/monthly-drills/). Never put the private key next to the backup workflow.
+</Aside>
+
+## Next
+
+**[Monthly drills](/guides/monthly-drills/)**: prove a backup restores, every month.

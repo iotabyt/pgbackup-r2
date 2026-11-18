@@ -39,7 +39,8 @@ def normalize_stamp(text: str) -> str:
     if not is_stamp(name):
         raise CommandError(
             f"{text!r} isn't a backup stamp: expected 'latest' or something like "
-            "2026-11-18T020000Z (run `list` to see them)"
+            "2026-11-18T020000Z",
+            hint="Run `pgb list` to see the backups and their stamps",
         )
     return name
 

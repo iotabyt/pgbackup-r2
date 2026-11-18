@@ -1,0 +1,80 @@
+---
+title: Introduction
+description: Encrypted Postgres backups to R2 or any S3, with restore drills that prove they work.
+next:
+  link: /start/why/
+  label: Why pgbackup-r2
+hero:
+  title: pgbackup-r2
+  tagline: Encrypted Postgres backups to Cloudflare R2 or any S3, with restore drills that prove they work.
+  image:
+    light: ../../assets/mark.svg
+    dark: ../../assets/mark-reversed.svg
+    alt: ""
+  actions:
+    - text: Quick start
+      link: /start/quick-start/
+      icon: right-arrow
+    - text: GitHub
+      link: https://github.com/iotabyt/pgbackup-r2
+      icon: github
+      variant: minimal
+---
+
+import { LinkCard, CardGrid } from "@astrojs/starlight/components";
+
+```bash title="From nothing to a proven backup"
+curl -fsSL https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/install.sh | sh
+pgb init        # writes .env: fill in the 7 lines at the top
+pgb backup
+pgb drill
+```
+
+pgbackup-r2 is opinionated. [Here's why.](/start/why/)
+
+Most backup setups stop at "upload succeeded". That tells you a file arrived. It doesn't tell you whether that file restores, whether every table made it in, or whether you can still decrypt it. A **drill** restores a backup into a throwaway database and checks every table's row count against a manifest written at backup time:
+
+```text
+PASS  shop/2026-11-18T020000Z.dump.age  (48.2 MB, restored in 21.4s)
+  37 tables and 1,284,903 rows match the manifest
+```
+
+## What it does
+
+- Takes logical backups with `pg_dump -Fc`, piped straight into [age](https://age-encryption.org), so the unencrypted dump never touches disk.
+- Refuses to run without a public key. An unencrypted backup isn't possible.
+- Uploads to R2 or any S3-compatible store, with a SHA-256 checksum in the object metadata.
+- Records the exact row count of every table in an encrypted manifest next to each dump.
+- Backs up on a schedule inside the container, with no cron daemon.
+- Prunes old backups but never the newest few, or leaves retention to your bucket's lifecycle rules.
+- Pings a heartbeat URL (healthchecks.io, Better Stack, Uptime Kuma) on success, and a different one on failure.
+- Drills restore a backup and compare row counts, and remember when they last passed. `verify` is a quicker check that needs no database.
+- `decrypt` gives you a plain `pg_dump` file to restore anywhere.
+
+Everything runs with **only Docker installed**, on Windows, macOS or Linux, through a small command called `pgb`.
+
+## Who it's for
+
+Small teams running a few apps, one Postgres each:
+
+- on a VPS with Docker Compose or Kamal
+- on a managed database like Neon or Supabase
+
+There are no agents and no dashboards: one container per database, and a folder with a `.env` on your laptop.
+
+## Who it isn't for
+
+pgbackup-r2 takes **logical** backups: a snapshot of each run, not point-in-time recovery. If you need to restore to the minute before an accident, or your database is too big to dump and restore in a reasonable time, use [pgBackRest](https://pgbackrest.org) or [WAL-G](https://github.com/wal-g/wal-g), which work from Postgres's write-ahead log.
+
+## Who uses it
+
+- **Iotabyt:** backs up Labpadi's production database every night (Neon, Postgres 18, GitHub Actions), with monthly drills.
+
+Using it too? [Open a pull request](https://github.com/iotabyt/pgbackup-r2/edit/main/docs/src/content/docs/index.mdx) to add a line.
+
+## Next
+
+<CardGrid>
+  <LinkCard title="Why pgbackup-r2" description="What we believe about backups, and what it will never do." href="/start/why/" />
+  <LinkCard title="Quick start" description="From nothing to a passing drill in about fifteen minutes." href="/start/quick-start/" />
+</CardGrid>

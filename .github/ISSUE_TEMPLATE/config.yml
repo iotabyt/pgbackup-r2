@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/iotabyt/pgbackup-r2/discussions
+    about: How do I...? Is this a good idea? Ask in Discussions.
+  - name: Report a security problem
+    url: https://github.com/iotabyt/pgbackup-r2/security/advisories/new
+    about: Privately, please. Don't open a public issue.
+  - name: Documentation
+    url: https://pgbackup-r2.iotabyt.com
+    about: Guides, reference and troubleshooting.

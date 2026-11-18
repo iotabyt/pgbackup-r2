@@ -1,0 +1,147 @@
+---
+/**
+ * The backup and drill pipeline as a static inline SVG: no client-side diagram library.
+ * Colours come from the theme's custom properties, so it follows light and dark mode.
+ * It reads top to bottom, so it stays legible at phone width.
+ */
+const W = 250; // box width
+const H = 46; // box height
+const X = 16; // box left edge
+const NOTE_X = X + W + 18;
+const STEP = 70;
+
+type Box = { title: string; sub?: string; notes: string[]; strong?: boolean };
+const backup: Box[] = [
+  { title: "Postgres", sub: "your live database", notes: ["DATABASE_URL"] },
+  { title: "pg_dump -Fc", sub: "after counting every table's rows", notes: ["counts go into", "the manifest"] },
+  { title: "age: encrypt", sub: "streamed, nothing plain on disk", notes: ["public key only", "(AGE_RECIPIENTS)"] },
+  {
+    title: "R2 or S3 bucket",
+    sub: "<prefix>/<stamp>.dump.age",
+    notes: ["+ .manifest.age", "sha256 in metadata"],
+    strong: true,
+  },
+];
+const drill: Box[] = [
+  { title: "Download, check sha256", notes: ["a mismatch stops", "the drill"] },
+  { title: "age: decrypt", notes: ["private key", "(AGE_IDENTITY)"] },
+  { title: "pg_restore", sub: "into a throwaway Postgres", notes: ["random password,", "removed afterwards"] },
+  { title: "Compare row counts", sub: "every table, against the manifest", notes: [] },
+  { title: "PASS or FAIL", notes: ["recorded in .drills/"], strong: true },
+];
+
+const BACKUP_TOP = 34;
+const DRILL_LABEL = BACKUP_TOP + backup.length * STEP + 14;
+const DRILL_TOP = DRILL_LABEL + 18;
+const HEIGHT = DRILL_TOP + drill.length * STEP - STEP + H + 16;
+
+const place = (boxes: Box[], top: number) => boxes.map((b, i) => ({ ...b, y: top + i * STEP }));
+const backupBoxes = place(backup, BACKUP_TOP);
+const drillBoxes = place(drill, DRILL_TOP);
+const bucket = backupBoxes[backupBoxes.length - 1];
+const cx = X + W / 2;
+---
+
+<figure class="pgb-diagram not-content">
+  <svg
+    viewBox={`0 0 420 ${HEIGHT}`}
+    role="img"
+    aria-labelledby="pgb-diagram-title pgb-diagram-desc"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <title id="pgb-diagram-title">How a backup and a drill work</title>
+    <desc id="pgb-diagram-desc">
+      Backup, on the server: Postgres, then pg_dump after counting rows, then age encrypts with the
+      public key, then the encrypted dump and manifest are uploaded to the bucket with a sha256.
+      Drill, on your laptop: download and check the sha256, decrypt with the private key,
+      pg_restore into a throwaway Postgres, compare every table's row count with the manifest,
+      and record PASS or FAIL.
+    </desc>
+    <defs>
+      <marker id="pgb-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" class="arrowhead"></path>
+      </marker>
+    </defs>
+
+    <text x={X} y="20" class="phase">BACKUP · on the server, nightly</text>
+    <text x={X} y={DRILL_LABEL} class="phase">DRILL · on your laptop or in CI, monthly</text>
+
+    {
+      [backupBoxes, drillBoxes].map((boxes) =>
+        boxes.map((b, i) => (
+          <g>
+            {i > 0 && (
+              <line x1={cx} y1={b.y - STEP + H} x2={cx} y2={b.y - 2} class="edge" marker-end="url(#pgb-arrow)" />
+            )}
+            <rect x={X} y={b.y} width={W} height={H} rx="6" class:list={["box", { strong: b.strong }]} />
+            <text x={X + 12} y={b.sub ? b.y + 19 : b.y + 28} class="title">{b.title}</text>
+            {b.sub && <text x={X + 12} y={b.y + 36} class="sub">{b.sub}</text>}
+            {b.notes.map((n, j) => (
+              <text x={NOTE_X} y={b.y + 19 + j * 15} class="note">{n}</text>
+            ))}
+          </g>
+        )),
+      )
+    }
+
+    <!-- The drill starts from the bucket. -->
+    <path
+      d={`M ${X + W} ${bucket.y + H / 2} h 0 M ${X} ${bucket.y + H / 2} h -8 V ${drillBoxes[0].y + H / 2} h 6`}
+      class="edge"
+      fill="none"
+      marker-end="url(#pgb-arrow)"
+    ></path>
+  </svg>
+</figure>
+
+<style>
+  .pgb-diagram {
+    margin: 1.5rem 0;
+    padding: 1rem 0.5rem;
+    border: 1px solid var(--sl-color-hairline);
+    border-radius: 0.375rem;
+  }
+  svg {
+    display: block;
+    width: 100%;
+    max-width: 34rem;
+    height: auto;
+    margin: 0 auto;
+    font-family: var(--__sl-font);
+  }
+  .box {
+    fill: var(--pgb-raised);
+    stroke: var(--sl-color-gray-5);
+    stroke-width: 1;
+  }
+  .box.strong {
+    stroke: var(--sl-color-white);
+    stroke-width: 1.5;
+  }
+  .title {
+    fill: var(--sl-color-white);
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .sub {
+    fill: var(--sl-color-gray-3);
+    font-size: 11.5px;
+  }
+  .note {
+    fill: var(--sl-color-gray-3);
+    font-size: 12px;
+  }
+  .phase {
+    fill: var(--sl-color-gray-3);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+  }
+  .edge {
+    stroke: var(--sl-color-gray-4);
+    stroke-width: 1.25;
+  }
+  .arrowhead {
+    fill: var(--sl-color-gray-4);
+  }
+</style>

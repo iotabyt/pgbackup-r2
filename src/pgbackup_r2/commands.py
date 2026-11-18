@@ -8,8 +8,11 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
+import subprocess
 import sys
 import time
+from collections.abc import Mapping
 from datetime import UTC, datetime
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -23,14 +26,15 @@ from .checks import (
     split_qualified,
     toc_tables,
 )
-from .config import Settings
+from .config import Settings, unknown_settings
 from .errors import CommandError, PgBackupError
 from .pgurl import parse_url, redact, same_database
 from .retention import select_expired
 from .scheduling import format_times, next_run, parse_times, sleep_until
-from .stamps import DUMP_SUFFIX, MANIFEST_SUFFIX, make_stamp, manifest_key
-from .storage import Backup, Store
-from .util import ago, human_size, require_tools, sha256_file, workdir
+from .stamps import DUMP_SUFFIX, MANIFEST_SUFFIX, make_stamp, manifest_key, parse_stamp
+from .storage import DRILLS_FOLDER, Backup, Store
+from .tiers import Layout, format_tiers, period, rule_for
+from .util import ago, human_size, require_tools, run, sha256_file, workdir
 
 MANIFEST_NOTE = (
     "Row counts are taken just before the dump starts, in a separate transaction, "
@@ -60,8 +64,11 @@ def _n(value: int | None) -> str:
 # --- backup -----------------------------------------------------------------------------
 
 
-def backup(settings: Settings, *, prune: bool = True) -> str:
-    """Take one encrypted backup and upload it with its manifest. Returns the dump key."""
+def backup(settings: Settings, *, prune: bool | None = None) -> str:
+    """Take one encrypted backup and upload it with its manifest. Returns the dump key.
+
+    With TIERS, the upload goes to the most frequent tier and other tiers get server-side
+    copies. `prune` defaults to PRUNE (on without TIERS, off with it)."""
     url = settings.require_database_url()
     recipients = agecrypt.check_recipients(settings.age_recipients)
     require_tools("psql", "pg_dump", "age")
@@ -111,10 +118,36 @@ def backup(settings: Settings, *, prune: bool = True) -> str:
         f"backed up {key} ({human_size(size)}, {len(tables)} tables) "
         f"in {time.monotonic() - started:.1f}s"
     )
-    if prune:
+    if settings.tiers:
+        copy_to_tiers(store, stamp)
+    if settings.prune if prune is None else prune:
         prune_backups(settings, store=store)
     heartbeat.ping(settings.heartbeat_url)
     return key
+
+
+def copy_to_tiers(store: Store, stamp: str) -> list[str]:
+    """Copy the backup `stamp` from the most frequent tier into every other tier whose current
+    period has no backup yet. Coverage is read from the bucket. Returns the tiers copied to."""
+    tiers = store.tiers
+    if len(tiers) < 2:
+        return []
+    src = store.key_for(stamp)
+    when = parse_stamp(stamp)
+    copied = []
+    for tier in tiers[1:]:
+        now_period = period(tier.name, when)
+        have = {period(tier.name, b.taken_at) for b in store.list_tier(tier)}
+        if now_period in have:
+            ui.info(f"{tier.name}: {tier.folder}/ already has a backup from {now_period}")
+            continue
+        dst = store.tier_key(tier, stamp)
+        with ui.step(f"Copying to {tier.folder}/", done=f"Copied to {dst} (first of {now_period})"):
+            store.copy(src, dst)
+            store.copy(manifest_key(src), manifest_key(dst))
+        ui.info(f"{tier.name}: copied to {dst}, the first backup of {now_period}")
+        copied.append(tier.name)
+    return copied
 
 
 # --- list / prune -----------------------------------------------------------------------
@@ -127,21 +160,49 @@ def list_backups(settings: Settings) -> int:
     if not backups:
         ui.out("no backups yet")
         return 0
+    try:
+        last_drill = _last_drill_line(store)
+    except (ClientError, BotoCoreError):
+        last_drill = None
     now = utcnow()
     width = max(len(human_size(b.size)) for b in backups)
+    title = f"{len(backups)} backup{'s' if len(backups) != 1 else ''} in {store.where()}"
+    if not settings.tiers:
+        ui.table(
+            ["stamp", "age", "size", "key"],
+            [[b.stamp, ago(b.taken_at, now), human_size(b.size), b.key] for b in backups],
+            align="llrl",
+            title=title,
+            plain_lines=[f"{b.stamp}  {human_size(b.size):>{width}}  {b.key}" for b in backups],
+        )
+        if last_drill:
+            ui.out(last_drill)
+        return 0
+    tw = max(len(t.name) for t in settings.tiers)
     ui.table(
-        ["stamp", "age", "size", "key"],
-        [[b.stamp, ago(b.taken_at, now), human_size(b.size), b.key] for b in backups],
-        align="llrl",
-        title=f"{len(backups)} backup{'s' if len(backups) != 1 else ''} in {store.where()}",
-        plain_lines=[f"{b.stamp}  {human_size(b.size):>{width}}  {b.key}" for b in backups],
+        ["tier", "stamp", "age", "size", "key"],
+        [[b.tier, b.stamp, ago(b.taken_at, now), human_size(b.size), b.key] for b in backups],
+        align="lllrl",
+        title=title,
+        plain_lines=[
+            f"{b.tier:<{tw}}  {b.stamp}  {human_size(b.size):>{width}}  {b.key}" for b in backups
+        ],
     )
+    if last_drill:
+        ui.out(last_drill)
     return 0
 
 
 def prune_backups(settings: Settings, *, dry_run: bool = False, store: Store | None = None) -> int:
+    """Delete backups past RETENTION_DAYS, keeping MIN_KEEP. With TIERS, only the most frequent
+    tier is pruned; the other tiers are left to the bucket's lifecycle rules."""
     store = store or Store(settings)
-    backups = {b.stamp: b for b in store.list_backups()}
+    if settings.tiers:
+        base = settings.tiers[0]
+        backups = {b.stamp: b for b in store.list_tier(base)}
+        ui.info(f"prune: only the {base.name} tier ({base.folder}/); other tiers are left alone")
+    else:
+        backups = {b.stamp: b for b in store.list_backups()}
     expired = select_expired(backups, utcnow(), settings.retention_days, settings.min_keep)
     kept = len(backups) - len(expired)
     if not expired:
@@ -164,8 +225,11 @@ def prune_backups(settings: Settings, *, dry_run: bool = False, store: Store | N
         ui.info(f"deleting {backups[stamp].key}")
         keys += [backups[stamp].key, manifest_key(backups[stamp].key)]
     with ui.step(f"Deleting {len(expired)} old backups", done=f"Pruned {len(expired)} backups"):
-        store.delete(keys)
-    ui.info(f"pruned {len(expired)} backups older than {settings.retention_days} days, {kept} kept")
+        locked = store.delete(keys)
+    for key in locked:
+        ui.warn(f"{key}: locked, skipped (a lock or retention rule protects it for now)")
+    pruned = len(expired) - sum(1 for k in locked if k.endswith(DUMP_SUFFIX))
+    ui.info(f"pruned {pruned} backups older than {settings.retention_days} days, {kept} kept")
     return 0
 
 
@@ -239,7 +303,11 @@ def _confirm_production(target: str) -> None:
     print(f"This will overwrite the LIVE database {redact(target)}.", file=sys.stderr)
     answer = input(f"Type the database name ({dbname}) to continue: ")
     if answer.strip() != dbname:
-        raise CommandError("the name didn't match; nothing was restored")
+        raise CommandError(
+            "the name didn't match; nothing was restored",
+            hint="Run it again and type the name exactly, or restore into a new database "
+            "with RESTORE_DATABASE_URL",
+        )
 
 
 def restore(settings: Settings, which: str | None, target: str, *, to_production: bool) -> int:
@@ -282,6 +350,11 @@ def drill(settings: Settings, which: str | None) -> int:
     require_tools("age", "pg_restore", "psql")
     store = Store(settings)
     b = store.resolve(which)
+    started = time.monotonic()
+    drilled_at = utcnow()
+
+    def record(ok: bool, tables: int | None, rows: int | None) -> None:
+        _record_drill(store, b, ok, tables, rows, time.monotonic() - started, drilled_at)
 
     try:
         with workdir() as tmp:
@@ -296,6 +369,7 @@ def drill(settings: Settings, which: str | None) -> int:
             seconds = s.seconds
     except CommandError as exc:
         problem = str(exc) + (f" ({exc.hint})" if exc.hint else "")
+        record(False, None, None)
         return _drill_failed(settings, f"{b.key}  ({human_size(b.size)})", [problem])
 
     head = f"{b.key}  ({human_size(b.size)}, restored in {seconds:.1f}s)"
@@ -305,6 +379,7 @@ def drill(settings: Settings, which: str | None) -> int:
         ui.result(
             True, head, ["the dump restores; no manifest found, so row counts weren't checked"]
         )
+        record(True, None, None)
         heartbeat.ping(settings.heartbeat_url)
         return 0
 
@@ -319,13 +394,67 @@ def drill(settings: Settings, which: str | None) -> int:
         bad_rows=[i for i, row in enumerate(report) if not row[3]],
     )
     problems = compare_counts(expected, actual, settings.drill_tolerance)
+    rows = sum(actual.values())
     if problems:
+        record(False, len(actual), rows)
         return _drill_failed(settings, head, problems)
 
-    rows = sum(actual.values())
     ui.result(True, head, [f"{len(actual)} tables and {rows:,} rows match the manifest"])
+    record(True, len(actual), rows)
     heartbeat.ping(settings.heartbeat_url)
     return 0
+
+
+def _record_drill(
+    store: Store,
+    b: Backup,
+    ok: bool,
+    tables: int | None,
+    rows: int | None,
+    seconds: float,
+    drilled_at: datetime,
+) -> None:
+    """Write <prefix>/.drills/<stamp>.json. Counts only, nothing from the database itself, so
+    it isn't encrypted. A failed write is a warning: the drill's own result stands."""
+    record = {
+        "drilled_at": drilled_at.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+        "result": "PASS" if ok else "FAIL",
+        "backup": b.key,
+        "backup_stamp": b.stamp,
+        "tier": b.tier,
+        "tables": tables,
+        "rows": rows,
+        "seconds": round(seconds, 1),
+        "tool_version": __version__,
+    }
+    try:
+        key = store.put_drill(make_stamp(drilled_at), record)
+    except (ClientError, BotoCoreError) as exc:
+        ui.warn(
+            f"couldn't record this drill in {store.folder_prefix(DRILLS_FOLDER)} ({exc}); "
+            "doctor and list won't see it. The token needs write access there"
+        )
+    else:
+        ui.info(f"recorded the drill in {key}")
+
+
+def _drill_age(record: dict | None, now: datetime) -> tuple[str, int] | None:
+    """('12 days ago', 12) for a drill record, or None."""
+    if not record:
+        return None
+    try:
+        when = datetime.fromisoformat(str(record["drilled_at"]).replace("Z", "+00:00"))
+    except (KeyError, ValueError):
+        return None
+    return ago(when, now), (now - when).days
+
+
+def _last_drill_line(store: Store) -> str:
+    last, _ = store.last_drills()
+    age = _drill_age(last, utcnow())
+    if last is None or age is None:
+        return "Last drill: never. Run `pgb drill` to prove a backup restores."
+    return f"Last drill: {last.get('result', '?')}, {age[0]}"
 
 
 def _drill_failed(settings: Settings, head: str, problems: list[str]) -> int:
@@ -345,7 +474,11 @@ def decrypt(
         raise CommandError(f"{out} already exists", hint="Pass --force to overwrite it")
     out_dir = os.path.dirname(os.path.abspath(out))
     if not os.path.isdir(out_dir):
-        raise CommandError(f"the folder {out_dir} doesn't exist")
+        raise CommandError(
+            f"the folder {out_dir} doesn't exist",
+            hint="With pgb, write under /out, which is ./out on your machine: "
+            "--out /out/backup.dump",
+        )
     if not os.access(out_dir, os.W_OK):
         raise CommandError(
             f"can't write to {out_dir} as uid {os.getuid()}",
@@ -384,7 +517,10 @@ def _sibling_manifest(path: str) -> str | None:
 def _decrypt_local(settings: Settings, file: str, out: str) -> dict | None:
     """Decrypt a .dump.age already on disk. Uses a .manifest.age next to it if there is one."""
     if not os.path.isfile(file):
-        raise CommandError(f"no such file: {file}")
+        raise CommandError(
+            f"no such file: {file}",
+            hint="With pgb, put the file in ./out and give its path as /out/<name>",
+        )
     manifest = None
     sibling = _sibling_manifest(file)
     if sibling:
@@ -492,3 +628,342 @@ def _scheduled_backup(settings: Settings) -> None:
     except Exception as exc:
         ui.exception("backup crashed")
         heartbeat.ping(settings.heartbeat_fail_url, failure=f"pgbackup-r2 backup crashed: {exc}")
+
+
+# --- doctor ------------------------------------------------------------------------------
+
+DOCTOR_REQUIRED = (
+    ("S3_BUCKET", "the bucket name"),
+    ("AWS_ACCESS_KEY_ID", "the R2/S3 token's access key"),
+    ("AWS_SECRET_ACCESS_KEY", "the R2/S3 token's secret"),
+    ("DATABASE_URL", "postgresql://user:password@host:5432/dbname"),
+    ("AGE_RECIPIENTS", "the age1... public key from keygen"),
+)
+
+
+def _tools_major() -> int | None:
+    """The major version of this image's pg_dump, e.g. 16."""
+    with contextlib.suppress(Exception):
+        out = subprocess.run(["pg_dump", "--version"], capture_output=True, text=True).stdout
+        m = re.search(r"\s(\d+)(?:\.\d+)?", out)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def doctor(env: Mapping[str, str] | None = None) -> int:
+    """Check everything a backup and a drill need, with a fix for each problem. Exit 1 on any ✗."""
+    env = os.environ if env is None else env
+    failed = 0
+
+    def check(ok: bool | None, label: str, fix: str | None = None) -> None:
+        nonlocal failed
+        failed += ok is False
+        ui.check(ok, label, fix)
+
+    missing = [name for name, _ in DOCTOR_REQUIRED if not env.get(name, "").strip()]
+    if missing:
+        check(
+            False,
+            f"Settings: {', '.join(missing)} {'is' if len(missing) == 1 else 'are'} not set",
+            "Fill in "
+            + "; ".join(f"{n} ({what})" for n, what in DOCTOR_REQUIRED if n in missing)
+            + ". `pgb init` writes a commented .env to start from",
+        )
+    try:
+        settings = Settings.from_env(env, require_bucket=False)
+    except PgBackupError as exc:
+        check(False, f"Settings: {exc}", exc.hint)
+        return 1
+    if not missing:
+        where = settings.s3_endpoint or "AWS S3"
+        check(True, f"Settings: everything a backup needs is set (storage: {where})")
+    _typo_checks(env, check)
+    if not (settings.age_identity or settings.age_identity_file):
+        check(
+            None,
+            "AGE_IDENTITY isn't set: fine for a backup-only server. "
+            "verify, drill, decrypt and restore need it",
+        )
+
+    # The database: reachable, and the same major version as PG_MAJOR and this image's tools.
+    if settings.database_url:
+        db = redact(settings.database_url)
+        try:
+            num = int(pg.psql(settings.database_url, "SHOW server_version_num"))
+            version = pg.server_version(settings.database_url).split()[0]
+        except (PgBackupError, ValueError) as exc:
+            hint = pg.connection_hint(str(exc), settings.database_url) or (
+                "Check DATABASE_URL: postgresql://user:password@host:5432/dbname, "
+                "with a direct (not pooled) host"
+            )
+            check(False, f"Database: can't connect to {db}: {_short(exc)}", hint)
+        else:
+            major = num // 10000
+            want_raw = env.get("PG_MAJOR", "").strip()
+            want = int(want_raw) if want_raw.isdigit() else _tools_major()
+            tools = _tools_major()
+            if want is not None and major != want:
+                check(
+                    False,
+                    f"Database: {db} is PostgreSQL {version}, but PG_MAJOR is {want}",
+                    f"Set PG_MAJOR={major} in .env, so the image (pg{major}) and the drill's "
+                    "scratch database match the server",
+                )
+            elif tools is not None and major != tools:
+                check(
+                    False,
+                    f"Database: {db} is PostgreSQL {version}, but this image's tools are {tools}",
+                    f"Use the pg{major} image (pgb: PG_MAJOR={major} in .env)",
+                )
+            else:
+                check(True, f"Database: connected to {db}, PostgreSQL {version}")
+
+    # The bucket: put a tiny object under the prefix, then delete it again.
+    if settings.s3_bucket:
+        store = Store(settings)
+        name = f".pgbackup-r2-doctor-{os.urandom(4).hex()}"
+        key = f"{store.prefix}/{name}" if store.prefix else name
+        try:
+            store.put_bytes(key, b"pgbackup-r2 doctor: safe to delete\n")
+        except (ClientError, BotoCoreError) as exc:
+            check(False, f"Bucket: can't write to {store.where()}: {_short(exc)}", _s3_hint(exc))
+        else:
+            try:
+                locked = store.delete([key])
+            except (ClientError, BotoCoreError, CommandError) as exc:
+                check(
+                    False,
+                    f"Bucket: wrote to {store.where()} but can't delete ({_short(exc)})",
+                    f"prune needs to delete: give the token Object Read & Write. Remove {key} "
+                    "by hand",
+                )
+            else:
+                if locked:
+                    check(
+                        True,
+                        f"Bucket: {store.where()} is writable. The test file {key} is locked by "
+                        "a lock or retention rule, so it stays until the lock ends",
+                    )
+                else:
+                    check(
+                        True,
+                        f"Bucket: {store.where()} is writable (wrote and deleted a test file)",
+                    )
+
+    if settings.s3_bucket:
+        _layout_checks(settings, Store(settings), check)
+
+    # The keys: anything encrypted to AGE_RECIPIENTS must open with AGE_IDENTITY.
+    if settings.age_recipients:
+        try:
+            agecrypt.check_recipients(settings.age_recipients)
+        except PgBackupError as exc:
+            check(False, f"Keys: {exc}", exc.hint)
+        else:
+            if settings.age_identity or settings.age_identity_file:
+                _check_keys(settings, check)
+
+    # Last: when a backup last restored for real (a warning at most, never a failure).
+    if settings.s3_bucket:
+        _drill_check(Store(settings), check)
+
+    if failed:
+        ui.out(f"\n{failed} {'check' if failed == 1 else 'checks'} failed.")
+        return 1
+    ui.out("\nAll checks passed.")
+    return 0
+
+
+def _check_keys(settings: Settings, check) -> None:
+    probe = b"pgbackup-r2 doctor " + os.urandom(8).hex().encode()
+    opened: bytes | None = None
+    error: PgBackupError | None = None
+    try:
+        sealed = agecrypt.encrypt_bytes(probe, settings.age_recipients)
+        opened = agecrypt.decrypt_bytes(sealed, settings)
+    except PgBackupError as exc:
+        error = exc
+    if opened == probe:
+        check(True, "Keys: AGE_IDENTITY opens what is encrypted to AGE_RECIPIENTS")
+        return
+    fix = "Make sure AGE_RECIPIENTS and AGE_IDENTITY come from the same `keygen`"
+    with contextlib.suppress(Exception), agecrypt.identity_path(settings) as path:
+        public = run(["age-keygen", "-y", path], what="age-keygen -y").stdout.decode().split()
+        if public:
+            fix = f"AGE_IDENTITY's public key is {public[0]}: add it to AGE_RECIPIENTS"
+    detail = f": {_short(error)}" if error else ""
+    check(False, f"Keys: AGE_IDENTITY can't open backups encrypted to AGE_RECIPIENTS{detail}", fix)
+
+
+def _short(exc: BaseException) -> str:
+    text = " ".join(str(exc).split())
+    return text if len(text) <= 200 else text[:197] + "..."
+
+
+def _s3_hint(exc: BaseException) -> str:
+    if isinstance(exc, ClientError):
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        if code == "NoSuchBucket":
+            return "Check S3_BUCKET, and that S3_ENDPOINT is the right account"
+        if code in ("InvalidAccessKeyId", "SignatureDoesNotMatch"):
+            return "Check AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY"
+        return "Give the token Object Read & Write on this bucket"
+    return "Check S3_ENDPOINT (for R2: https://<account-id>.r2.cloudflarestorage.com)"
+
+
+def _layout_checks(settings: Settings, store: Store, check) -> None:
+    """Doctor's view of the bucket layout: tiers, lifecycle rules, files that aren't ours."""
+    try:
+        rules = store.lifecycle()
+        if not settings.tiers:
+            layout = store.detect_layout()
+            foreign = store.folder_stats(None)[1]
+            if foreign:
+                check(
+                    None,
+                    f"{foreign} other file{'s' if foreign != 1 else ''} under "
+                    f"{store.where()} not made by pgbackup-r2 (left alone)",
+                )
+            if layout.suggestion:
+                check(
+                    None,
+                    " ".join(layout.describe()),
+                    f"Suggested: {'   '.join(layout.suggested_lines())}  (`pgb init --detect` "
+                    "writes it into .env)",
+                )
+            return
+        for tier in settings.tiers:
+            backups, foreign = store.folder_stats(tier.folder)
+            prefix = store.folder_prefix(tier.folder)
+            rule = rule_for(prefix, rules or [])
+            life = f", lifecycle: delete after {rule.days} days" if rule else ""
+            role = "gets every upload" if tier == settings.tiers[0] else "gets copies"
+            n = len(backups)
+            check(
+                True, f"Tier {tier.name}: {prefix} {role}, {n} backup{'s' if n != 1 else ''}{life}"
+            )
+            if foreign:
+                check(
+                    None,
+                    f"{foreign} other file{'s' if foreign != 1 else ''} in {tier.folder}/ "
+                    "not made by pgbackup-r2 (left alone)",
+                )
+            if rules is not None and rule is None and not settings.prune:
+                check(
+                    None,
+                    f"{tier.folder}/ has no lifecycle rule that deletes old files, and PRUNE is "
+                    "off, so its backups are kept forever",
+                    "Add a lifecycle rule for it: https://pgbackup-r2.iotabyt.com/guides/existing-folders/",
+                )
+        if rules is None:
+            check(
+                None,
+                "Couldn't read the bucket's lifecycle rules (the token may not be allowed to); "
+                "check them in your storage dashboard",
+            )
+    except (ClientError, BotoCoreError):
+        return  # the bucket check above has already said what's wrong
+
+
+# --- detect ------------------------------------------------------------------------------
+
+
+def detect(settings: Settings, *, suggest_only: bool = False) -> int:
+    """Look at the folders and lifecycle rules under S3_PREFIX and suggest a TIERS line.
+
+    With --env-lines, the explanation goes to stderr and only the .env lines to stdout, so a
+    wrapper like `pgb init --detect` can capture them."""
+    store = Store(settings)
+    layout: Layout = store.detect_layout()
+    lines = layout.describe()
+    suggestion = layout.suggested_lines()
+    if suggestion:
+        if settings.tiers and format_tiers(settings.tiers) == suggestion[0]:
+            lines.append(f"Your TIERS already matches: {suggestion[0]}")
+            suggestion = []
+        else:
+            lines.append(f"Suggested: {'   '.join(suggestion)}")
+    else:
+        lines.append(
+            "No tier folders (daily/, monthly/, ...) found. The default fits: backups go "
+            "straight under the prefix and are pruned by RETENTION_DAYS."
+        )
+    if suggest_only:
+        for line in lines:
+            print(line, file=sys.stderr)
+        for line in suggestion:
+            print(line)
+        return 0
+    for line in lines:
+        ui.out(line)
+    return 0
+
+
+DRILL_MAX_DAYS = 35
+
+
+def _drill_check(store: Store, check) -> None:
+    """When a backup last restored for real. A warning, never a failure."""
+    try:
+        last, last_pass = store.last_drills()
+    except (ClientError, BotoCoreError):
+        return
+    now = utcnow()
+    passed = _drill_age(last_pass, now)
+    if passed is None:
+        if last is None:
+            check(ui.WARN, "This bucket has never been drilled.", "Run `pgb drill`.")
+        else:
+            failed = _drill_age(last, now)
+            when = f", {failed[0]}" if failed else ""
+            check(
+                ui.WARN,
+                f"No drill has passed yet (last drill: {last.get('result', '?')}{when}).",
+                "Fix what the drill reported, then run `pgb drill` again.",
+            )
+        return
+    text, days = passed
+    if days > DRILL_MAX_DAYS:
+        check(
+            ui.WARN,
+            f"Your last successful drill was {text.removesuffix(' ago')} ago.",
+            "Run `pgb drill`.",
+        )
+    else:
+        check(True, f"Last successful drill: {text} ({last_pass.get('backup', '?')})")
+    if last is not last_pass and last is not None:
+        failed = _drill_age(last, now)
+        check(
+            ui.WARN,
+            f"The most recent drill failed{f' ({failed[0]})' if failed else ''}.",
+            "Run `pgb drill` to see why.",
+        )
+
+
+def _typo_checks(env: Mapping[str, str], check) -> None:
+    """Warn about settings nobody reads, usually typos: S3_BUKET → S3_BUCKET?
+
+    pgb passes the names in .env (names only, never values) as PGB_ENV_KEYS, so every unknown
+    one can be reported. Without pgb, only the process environment exists, which is full of
+    other programs' variables: then just the names that look like a misspelt setting count.
+    """
+    listed = env.get("PGB_ENV_KEYS")
+    if listed is not None:
+        names, where, suspicious = [n for n in listed.split(",") if n], ".env", False
+    else:
+        names, where, suspicious = list(env), "Environment", True
+    for name, guess in unknown_settings(names, only_suspicious=suspicious):
+        if guess:
+            check(
+                ui.WARN,
+                f"{where}: {name} → {guess}? pgbackup-r2 has no setting called {name}.",
+                f"Rename it to {guess}.",
+            )
+        else:
+            check(
+                ui.WARN,
+                f"{where}: {name} isn't a pgbackup-r2 setting, so nothing reads it.",
+                "Check the spelling against https://pgbackup-r2.iotabyt.com/reference/environment/,"
+                " or remove it if it's not for pgbackup-r2.",
+            )

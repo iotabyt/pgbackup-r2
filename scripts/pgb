@@ -1,21 +1,477 @@
 #!/usr/bin/env bash
-# pgb: run pgbackup-r2 through Docker, using ./.env and ./out. https://github.com/iotabyt/pgbackup-r2
-#   pgb keygen | pgb list | pgb verify | pgb decrypt latest --out /out/backup.dump | pgb --help
-# PG_MAJOR (from .env, default 16) picks the image. PGB_DOCKER_ARGS adds docker options,
-# e.g. PGB_DOCKER_ARGS="--network host". PGB_IMAGE overrides the image.
+# pgb: pgbackup-r2 through Docker, using the .env and out/ in the current folder.
+# https://github.com/iotabyt/pgbackup-r2 (scripts/pgb.ps1 is the PowerShell twin.)
+#
+# PG_MAJOR (from .env, default 16) picks the image, and PGB_NETWORK joins a Docker network.
+# For developers: PGB_IMAGE runs a different image, such as a local build (CONTRIBUTING.md).
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 # Git Bash on Windows: don't rewrite /out
-pg=16 args=()
-if [[ -f .env ]]; then
-  args+=(--env-file .env)
-  v=$(sed -n 's/^PG_MAJOR=\([0-9][0-9]*\).*$/\1/p' .env | tail -n 1)
-  pg=${v:-16}
-fi
-pg=${PG_MAJOR:-$pg}
-if [[ -t 0 && -t 1 ]]; then args+=(-it); fi
+
+PGB_VERSION=0.2.0
+REPO=ghcr.io/iotabyt/pgbackup-r2
+
+die() {
+  printf 'pgb: %s\n' "$*" >&2
+  exit 1
+}
+
+# The last KEY=value for KEY in ./.env, with any CR from Windows line endings removed.
+env_value() {
+  if [[ -f .env ]]; then
+    sed -n "s/^$1=//p" .env | tr -d '\r' | tail -n 1
+  fi
+}
+
+pg=${PG_MAJOR:-$(env_value PG_MAJOR)}
+pg=${pg:-16}
+[[ $pg =~ ^[0-9]+$ ]] || die "PG_MAJOR must be a number like 16, not '$pg'. Fix it in .env."
+image=${PGB_IMAGE:-$REPO:pg$pg}
+
+# decrypt writes to /out: create ./out first, or Docker would create it owned by root.
 if [[ " $* " == *" decrypt "* ]]; then mkdir -p out; fi
-if [[ -d out ]]; then args+=(-v "$PWD/out:/out"); fi
-if [[ "$(uname -s)" == Linux ]]; then args+=(--user "$(id -u):$(id -g)"); fi
-# shellcheck disable=SC2206 # word-splitting PGB_DOCKER_ARGS is intended
-if [[ -n "${PGB_DOCKER_ARGS:-}" ]]; then args+=($PGB_DOCKER_ARGS); fi
-exec docker run --rm ${args[@]+"${args[@]}"} "${PGB_IMAGE:-ghcr.io/iotabyt/pgbackup-r2:pg$pg}" "$@"
+
+# Options every container gets: .env, ./out and, on Linux, your user.
+common=()
+if [[ -f .env ]]; then common+=(--env-file .env); fi
+# Tells the image it runs under pgb, so its help and messages say `pgb`.
+common+=(-e "PGB_VERSION=$PGB_VERSION")
+if [[ -d out ]]; then common+=(-v "$PWD/out:/out"); fi
+if [[ "$(uname -s)" == Linux ]]; then common+=(--user "$(id -u):$(id -g)"); fi
+tty=()
+if [[ -t 0 && -t 1 ]]; then tty=(-it); fi
+
+note() { printf 'pgb: %s\n' "$*" >&2; }
+
+# How containers that talk to the database reach it. PGB_NETWORK joins an existing Docker
+# network (e.g. a Compose project's myapp_default). Otherwise a database on localhost is
+# reached with --network host on Linux, or through host.docker.internal on Docker Desktop.
+local_url_re='^(postgres(ql)?://([^@/]*@)?)(localhost|127\.0\.0\.1)([:/?].*)?$'
+db_network() {
+  local network var url head tail desktop=""
+  network=${PGB_NETWORK:-$(env_value PGB_NETWORK)}
+  if [[ -n $network ]]; then
+    common+=(--network "$network")
+    return 0
+  fi
+  for var in DATABASE_URL RESTORE_DATABASE_URL; do
+    url=$(env_value "$var")
+    [[ $url =~ $local_url_re ]] || continue
+    head=${BASH_REMATCH[1]} tail=${BASH_REMATCH[5]}
+    if [[ -z $desktop ]]; then
+      desktop=yes
+      if [[ "$(uname -s)" == Linux ]] &&
+        ! docker info -f '{{.OperatingSystem}}' 2>/dev/null | grep -q 'Docker Desktop'; then
+        desktop=no
+      fi
+    fi
+    if [[ $desktop == no ]]; then
+      note "$var is on localhost: using --network host"
+      common+=(--network host)
+      return 0
+    fi
+    # Through the environment rather than -e VAR=value, so the password stays out of ps.
+    export "$var=${head}host.docker.internal${tail}"
+    common+=(-e "$var")
+    note "$var is on localhost: using host.docker.internal (Docker Desktop)"
+  done
+}
+
+image_version() { # prints e.g. "0.2.0", or nothing if the image isn't here
+  if docker image inspect "$image" >/dev/null 2>&1; then
+    docker run --rm "$image" --version 2>/dev/null | awk '{print $NF}'
+  fi
+}
+
+cmd_help() {
+  if [[ $# -gt 0 ]]; then
+    case $1 in
+    init | drill | nightly | update | version | help) own_help "$1" ;;
+    *) exec docker run --rm ${tty[@]+"${tty[@]}"} -e "PGB_VERSION=$PGB_VERSION" "$image" "$1" --help ;;
+    esac
+    return
+  fi
+  cat <<EOF
+pgb $PGB_VERSION: pgbackup-r2 through Docker, using ./.env (image $image)
+
+  pgb init                    write a commented .env here, and create out/
+  pgb init --detect           suggest TIERS from the bucket's folders (asks before writing)
+  pgb doctor                  check Docker, .env, the database, the bucket and the keys
+  pgb keygen                  print a new key pair
+  pgb backup                  back up DATABASE_URL now
+  pgb list                    list backups, and when the last drill ran
+  pgb verify [STAMP]          download, check and decrypt a backup; no database needed
+  pgb drill [STAMP]           restore into a throwaway Postgres and check every table
+  pgb decrypt latest --out /out/backup.dump
+  pgb restore [STAMP]         restore into RESTORE_DATABASE_URL
+  pgb prune [--dry-run]       delete backups past RETENTION_DAYS
+  pgb nightly start|stop|status|logs
+                              back up every day at BACKUP_AT, in a background container
+  pgb update                  pull the latest image for PG_MAJOR
+  pgb version                 pgb's and the image's versions
+
+pgb help <command> shows what a command does, with examples.
+Docs: https://pgbackup-r2.iotabyt.com
+EOF
+}
+
+# Help for pgb's own commands. The image's commands have their own (pgb help backup).
+own_help() {
+  case $1 in
+  init)
+    cat <<'EOF'
+Write a commented .env here, and create out/.
+
+Usage: pgb init [--detect] [--yes]
+
+Never overwrites an existing .env. With --detect and an existing .env, it looks at the
+bucket's folders and lifecycle rules and suggests TIERS. It asks before writing; --yes
+writes without asking.
+
+Examples:
+  pgb init                          # set up a folder for one database
+  pgb init --detect                 # fit into the folders your bucket already has
+EOF
+    ;;
+  drill)
+    cat <<'EOF'
+Restore a backup into a throwaway database and check every table.
+
+Usage: pgb drill [STAMP]
+
+Starts postgres:<PG_MAJOR> on a private Docker network, restores the backup, compares
+every table's row count with the manifest, and removes the database afterwards.
+
+Examples:
+  pgb drill                         # the latest backup
+  pgb drill 2026-11-18T020000Z      # a specific one
+EOF
+    ;;
+  nightly)
+    cat <<'EOF'
+Back up every day at BACKUP_AT, in a background container.
+
+Usage: pgb nightly start|stop|status|logs [-f]
+
+The container is named pgbackup-<S3_PREFIX> and restarts with Docker.
+
+Examples:
+  pgb nightly start                 # start it; does nothing if it's already running
+  pgb nightly status                # running or not, and the last log lines
+  pgb nightly logs -f               # follow the log
+EOF
+    ;;
+  update)
+    cat <<'EOF'
+Pull the latest image for PG_MAJOR, and show the old and new versions.
+
+Usage: pgb update
+
+Examples:
+  pgb update
+EOF
+    ;;
+  version)
+    cat <<'EOF'
+Show pgb's version and the version in the image.
+
+Usage: pgb version
+
+Examples:
+  pgb version
+EOF
+    ;;
+  help)
+    cat <<'EOF'
+Show the commands, or what one command does, with examples.
+
+Usage: pgb help [COMMAND]
+
+Examples:
+  pgb help
+  pgb help drill
+EOF
+    ;;
+  esac
+}
+
+# pgb init --detect [--yes]: suggest TIERS/PRUNE from the bucket and, if you agree, put them
+# in .env (replacing any TIERS= and PRUNE= lines already there).
+cmd_detect() {
+  local yes=$1 lines answer kept
+  # No -t: the explanation comes on stderr, the .env lines on stdout.
+  lines=$(docker run --rm ${common[@]+"${common[@]}"} "$image" detect --env-lines) || exit $?
+  [[ -n $lines ]] || return 0
+  echo
+  printf '%s\n' "$lines" | sed 's/^/    /'
+  echo
+  if [[ $yes != yes ]]; then
+    if [[ ! -t 0 ]]; then
+      echo "Not a terminal, so .env is unchanged. Add the lines yourself, or rerun with --yes."
+      return 0
+    fi
+    read -r -p "Write these into .env? [y/N] " answer
+    if [[ $answer != [yY]* ]]; then
+      echo ".env unchanged."
+      return 0
+    fi
+  fi
+  # Rewrite in place (>), so .env keeps its owner and permissions.
+  kept=$(grep -v -E '^(TIERS|PRUNE)=' .env || true)
+  printf '%s\n%s\n' "$kept" "$lines" >.env
+  echo "Updated .env. pgb doctor shows how each tier looks now."
+}
+
+cmd_init() {
+  local detect="" yes=""
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+    --detect) detect=yes ;;
+    --yes | -y) yes=yes ;;
+    *) die "pgb init: unknown option $1 (try --detect)" ;;
+    esac
+    shift
+  done
+  if [[ -n $detect && -f .env ]]; then
+    cmd_detect "$yes"
+    return
+  fi
+  if [[ -e .env ]]; then
+    die ".env already exists here; not touching it (pgb init --detect looks at the bucket)"
+  fi
+  # noclobber (-C) makes the write fail rather than overwrite a file that appears meanwhile.
+  (
+    set -C
+    umask 077
+    cat >.env <<'ENV'
+# pgbackup-r2 settings for this folder, read by `pgb`. Keep this file out of git: it holds
+# passwords. Write values without quotes, and keep comments on their own lines.
+# Every setting is explained at https://pgbackup-r2.iotabyt.com/reference/environment/
+
+# Your Postgres server's major version (run SHOW server_version;)
+PG_MAJOR=16
+# The database to back up, as a direct connection: postgresql://user:password@host:5432/db
+DATABASE_URL=
+# The bucket's S3 endpoint. R2: https://<account-id>.r2.cloudflarestorage.com
+S3_ENDPOINT=
+# The bucket's name
+S3_BUCKET=
+# An API token for the bucket, with read and write access
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+# The PUBLIC key from `pgb keygen` (age1...). Backups are encrypted to it.
+AGE_RECIPIENTS=
+
+# Optional. Uncomment a line to change it; the value shown is the default.
+
+# The PRIVATE key from `pgb keygen`, for verify, drill, decrypt and restore. Laptop only.
+# AGE_IDENTITY=
+# A folder in the bucket for this app. `pgb nightly` names its container after it.
+# S3_PREFIX=
+# The bucket's region: auto suits R2. For AWS S3 or Backblaze B2, the real region.
+# S3_REGION=auto
+# A database in Docker Compose here: join its network (`docker network ls` lists them)
+# PGB_NETWORK=
+# UTC times for `pgb nightly`, comma-separated
+# BACKUP_AT=02:00
+# Delete backups older than this many days...
+# RETENTION_DAYS=30
+# ...but always keep the newest few
+# MIN_KEEP=7
+# Delete old backups after each backup (default false when TIERS is set)
+# PRUNE=true
+# Use folders you already have, e.g. "daily=daily/ monthly=monthly/" (pgb init --detect)
+# TIERS=
+# A URL pinged after each successful backup or drill, and one for failures
+# HEARTBEAT_URL=
+# HEARTBEAT_FAIL_URL=
+# Where `pgb restore` restores to
+# RESTORE_DATABASE_URL=
+ENV
+  ) || die "couldn't write .env. Check you can write to this folder."
+  case "$(uname -s)" in Linux | Darwin) chmod 600 .env ;; esac
+  mkdir -p out
+  cat <<'EOF'
+Wrote .env (readable only by you) and created out/.
+
+Next:
+  1. pgb keygen      make a key pair; save the PRIVATE key in your password manager
+  2. Fill in .env    the 7 lines at the top; everything under "Optional" can wait
+  3. pgb doctor      check everything is set up right
+  4. pgb backup      take a first backup
+  5. pgb verify      check it downloads and decrypts
+  6. pgb drill       restore it into a throwaway Postgres and compare row counts
+Then `pgb nightly start` backs up every night at BACKUP_AT (02:00 UTC).
+EOF
+  if [[ -n $detect ]]; then
+    echo
+    echo "To look for existing folders: fill in the S3_* settings, then run pgb init --detect again."
+  fi
+}
+
+cmd_drill() {
+  local id net db run pw rc vol
+  id=$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')
+  pw=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+  net=pgb-drill-$id db=pgb-drill-$id-db run=pgb-drill-$id-run
+  # Postgres 18 images keep their data under /var/lib/postgresql, older ones in .../data.
+  vol=/var/lib/postgresql/data
+  if ((pg >= 18)); then vol=/var/lib/postgresql; fi
+
+  # shellcheck disable=SC2317,SC2329 # run by the EXIT trap
+  cleanup() {
+    docker rm -fv "$run" "$db" >/dev/null 2>&1 || true
+    docker network rm "$net" >/dev/null 2>&1 || true
+  }
+  trap cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  echo "pgb: starting a throwaway postgres:$pg ($db)" >&2
+  docker network create "$net" >/dev/null
+  # The password goes in through the environment, not the command line, to stay out of ps.
+  POSTGRES_PASSWORD=$pw docker run -d --name "$db" --network "$net" --tmpfs "$vol" \
+    -e POSTGRES_PASSWORD -e POSTGRES_DB=drill "postgres:$pg" >/dev/null
+
+  local waited=0
+  # -h 127.0.0.1: the image's first-boot server only listens on a socket, so this
+  # waits for the real one.
+  until docker exec "$db" pg_isready -q -h 127.0.0.1 -U postgres -d drill 2>/dev/null; do
+    if ((waited >= 60)); then
+      docker logs --tail 20 "$db" >&2 || true
+      die "the throwaway Postgres wasn't ready after 60s. Check Docker has memory to spare, then run pgb drill again."
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  rc=0
+  DRILL_DATABASE_URL="postgresql://postgres:$pw@$db:5432/drill" \
+    docker run --rm --name "$run" ${tty[@]+"${tty[@]}"} ${common[@]+"${common[@]}"} --network "$net" \
+    -e DRILL_DATABASE_URL "$image" drill "$@" || rc=$?
+  exit "$rc"
+}
+
+cmd_doctor() {
+  if docker info >/dev/null 2>&1; then
+    echo "✓ Docker is running"
+  else
+    echo "✗ Docker isn't running, or you can't reach it"
+    echo "    Start Docker Desktop, or on Linux: sudo systemctl start docker (and add yourself"
+    echo "    to the docker group: sudo usermod -aG docker \$USER, then log in again)"
+    return 1
+  fi
+  if [[ -f .env ]]; then
+    echo "✓ .env found in $PWD"
+  else
+    echo "✗ No .env in $PWD"
+    echo "    Run pgb init here, or cd to the folder that has your .env"
+    return 1
+  fi
+  db_network
+  # The names in .env (never the values), so doctor can catch typos like S3_BUKET.
+  PGB_ENV_KEYS=$(sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' .env | tr '\n' ',')
+  export PGB_ENV_KEYS
+  docker run --rm ${tty[@]+"${tty[@]}"} ${common[@]+"${common[@]}"} -e PGB_ENV_KEYS "$image" doctor
+}
+
+nightly_name() {
+  local prefix
+  prefix=$(env_value S3_PREFIX | tr -c 'A-Za-z0-9_.\n-' '-' | sed 's/^[-.]*//; s/-*$//')
+  echo "pgbackup${prefix:+-$prefix}"
+}
+
+cmd_nightly() {
+  local name state at
+  name=$(nightly_name)
+  state=$(docker inspect -f '{{.State.Status}}' "$name" 2>/dev/null || true)
+  case "${1:-}" in
+  start)
+    [[ -f .env ]] || die "no .env here; run pgb init first"
+    if [[ $state == running ]]; then
+      echo "$name is already running. pgb nightly status shows how it's doing."
+      return 0
+    fi
+    if [[ -n $state ]]; then docker rm -f "$name" >/dev/null; fi
+    if [[ -n $(env_value AGE_IDENTITY) ]]; then
+      echo "pgb: note: .env has AGE_IDENTITY; backups don't need it. Leave it out on a server." >&2
+    fi
+    db_network
+    docker run -d --name "$name" --restart unless-stopped ${common[@]+"${common[@]}"} "$image" schedule >/dev/null
+    at=$(env_value BACKUP_AT)
+    echo "Started $name ($image). It backs up at ${at:-02:00} UTC."
+    echo "pgb nightly status | pgb nightly logs -f | pgb nightly stop"
+    ;;
+  stop)
+    if [[ -z $state ]]; then
+      echo "$name isn't running."
+      return 0
+    fi
+    docker rm -f "$name" >/dev/null
+    echo "Stopped and removed $name. Backups already taken stay in the bucket."
+    ;;
+  status)
+    if [[ -z $state ]]; then
+      echo "$name: not running. Start it with pgb nightly start."
+      return 3
+    fi
+    docker inspect -f "{{.Name}}: {{.State.Status}} since {{.State.StartedAt}}, image {{.Config.Image}}, restarts {{.RestartCount}}" "$name" | sed 's#^/##'
+    echo "--- last log lines"
+    docker logs --tail 10 "$name" 2>&1
+    [[ $state == running ]] || return 1
+    ;;
+  logs)
+    [[ -n $state ]] || die "$name isn't running. Start it with pgb nightly start."
+    shift
+    docker logs --tail 100 "$@" "$name"
+    ;;
+  *) die "usage: pgb nightly start|stop|status|logs [-f]" ;;
+  esac
+}
+
+cmd_update() {
+  local old new
+  old=$(image_version)
+  docker pull "$image"
+  new=$(image_version)
+  if [[ -z $old ]]; then
+    echo "Pulled $image: pgbackup-r2 $new"
+  elif [[ $old == "$new" ]]; then
+    echo "$image is up to date: pgbackup-r2 $new"
+  else
+    echo "Updated $image: pgbackup-r2 $old -> $new"
+  fi
+  local running
+  running=$(docker inspect -f '{{.Image}}' "$(nightly_name)" 2>/dev/null || true)
+  if [[ -n $running && $running != "$(docker image inspect -f '{{.Id}}' "$image")" ]]; then
+    echo "$(nightly_name) still runs the old image. To switch: pgb nightly stop && pgb nightly start"
+  fi
+}
+
+cmd_version() {
+  local v
+  v=$(image_version)
+  echo "pgb $PGB_VERSION"
+  echo "image $image: ${v:+pgbackup-r2 }${v:-not pulled yet (pgb update)}"
+}
+
+# --help on pgb's own commands shows help, rather than doing the thing.
+if [[ $# -gt 1 && " ${*:2} " =~ \ (-h|--help)\  ]]; then
+  case $1 in init | drill | nightly | update | version) own_help "$1" && exit 0 ;; esac
+fi
+
+case "${1:-help}" in
+help | -h | --help)
+  shift || true
+  cmd_help "$@"
+  ;;
+init) shift && cmd_init "$@" ;;
+doctor) cmd_doctor ;;
+drill) shift && cmd_drill "$@" ;;
+nightly) shift && cmd_nightly "$@" ;;
+update) cmd_update ;;
+version | --version) cmd_version ;;
+*)
+  if [[ $1 != keygen ]]; then db_network; fi
+  exec docker run --rm ${tty[@]+"${tty[@]}"} ${common[@]+"${common[@]}"} "$image" "$@"
+  ;;
+esac

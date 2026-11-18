@@ -1,0 +1,26 @@
+name: Feature request
+description: Something pgbackup-r2 could do better, or doesn't do yet.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        pgbackup-r2 is deliberately small. Before asking for something new, please read [Why pgbackup-r2](https://pgbackup-r2.iotabyt.com/start/why/): some things, like point-in-time recovery or an unencrypted mode, are out of scope on purpose.
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+      description: The job you're trying to get done, and where pgbackup-r2 gets in the way. Not the solution yet.
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: What do you do today instead?
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like added?
+      description: Your idea of how it could work. A command, a setting, a change to the docs...
+    validations:
+      required: true

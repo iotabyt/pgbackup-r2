@@ -22,3 +22,6 @@ build/
 .pytest_cache/
 .ruff_cache/
 .coverage
+
+# Windows download markers
+*:Zone.Identifier

@@ -1,0 +1,57 @@
+name: Bug report
+description: Something doesn't work the way the docs say it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Never paste secrets:** remove passwords, tokens and keys (anything after `AWS_SECRET_ACCESS_KEY=`, `AGE_IDENTITY=`, or a password in a `postgresql://` URL) before you submit.
+        Security problems go through [private vulnerability reporting](https://github.com/iotabyt/pgbackup-r2/security/advisories/new) instead, please.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: The command you ran, what it printed, and what you expected instead.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: version
+    attributes:
+      label: "`pgb version` output"
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`pgb doctor` output (secrets redacted)"
+      description: Run it in the folder with your `.env`. It doesn't print secrets itself, but check before pasting.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: pg
+    attributes:
+      label: Postgres major version of the server
+      placeholder: "17"
+    validations:
+      required: true
+  - type: dropdown
+    id: storage
+    attributes:
+      label: Storage provider
+      options:
+        - Cloudflare R2
+        - Cloudflare R2 (EU jurisdiction)
+        - AWS S3
+        - Backblaze B2
+        - MinIO
+        - Other S3-compatible
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Where you run pgb
+      placeholder: "macOS 15, Docker Desktop 4.x / Ubuntu 24.04 / GitHub Actions"

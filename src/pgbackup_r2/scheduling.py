@@ -30,10 +30,15 @@ def parse_times(spec: str) -> list[tuple[int, int]]:
             hour, minute = int(hour_s), int(minute_s)
             ok = 0 <= hour <= 23 and 0 <= minute <= 59
         if not ok:
-            raise ConfigError(f"{item!r} isn't a valid time: use HH:MM in UTC, e.g. 02:00 or 14:30")
+            raise ConfigError(
+                f"{item!r} isn't a valid time",
+                hint="Use HH:MM in UTC, comma-separated: BACKUP_AT=02:00 or 02:00,14:30",
+            )
         times.add((hour, minute))
     if not times:
-        raise ConfigError("no backup times given: use HH:MM in UTC, e.g. 02:00")
+        raise ConfigError(
+            "no backup times given", hint="Set BACKUP_AT=02:00 (UTC), or leave it out for 02:00"
+        )
     return sorted(times)
 
 

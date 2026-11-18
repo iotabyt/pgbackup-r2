@@ -1,0 +1,124 @@
+---
+title: Restoring on a bad day
+description: Get your data back. Find the backup, restore it somewhere safe, then switch over.
+next:
+  link: /troubleshooting/
+  label: Troubleshooting
+---
+
+import { Steps, Tabs, TabItem, Aside } from "@astrojs/starlight/components";
+
+Something went wrong, and you need yesterday's data. Take a breath: if your drills have been passing, this works. Do it from your laptop, in the folder whose `.env` has the private key.
+
+<Steps>
+
+1. **Find the backup.**
+
+   ```bash
+   pgb list
+   ```
+
+   ```text
+   2026-11-16T020000Z  48.1 MB  shop/2026-11-16T020000Z.dump.age
+   2026-11-17T020000Z  48.2 MB  shop/2026-11-17T020000Z.dump.age
+   2026-11-18T020000Z  48.2 MB  shop/2026-11-18T020000Z.dump.age
+   Last drill: PASS, 12 days ago
+   ```
+
+   Stamps are UTC. Pick the newest one from before the accident. With [TIERS](/guides/existing-folders/), older backups may only be in `monthly/`, so name them `monthly/<stamp>`.
+
+2. **Check it opens,** without touching any database:
+
+   ```bash
+   pgb verify 2026-11-17T020000Z
+   ```
+
+3. **Restore into a new, empty database,** not over the live one. Create it first, then put it in `.env`:
+
+   ```bash
+   RESTORE_DATABASE_URL=postgresql://user:password@host:5432/shop_restored
+   ```
+
+   <Tabs syncKey="tool">
+   <TabItem label="pgb">
+
+   ```bash
+   pgb restore 2026-11-17T020000Z
+   ```
+
+   </TabItem>
+   <TabItem label="docker">
+
+   ```bash
+   docker run --rm -it --env-file .env ghcr.io/iotabyt/pgbackup-r2:pg17 restore 2026-11-17T020000Z
+   ```
+
+   </TabItem>
+   </Tabs>
+
+   It downloads the backup, checks the checksum, decrypts it, and runs `pg_restore --clean --if-exists`.
+
+4. **Look at the restored data.** Check the rows you care about, then switch your app's `DATABASE_URL` over, or copy the rows you need back into the live database.
+
+</Steps>
+
+## Why `RESTORE_DATABASE_URL`, not `--target`
+
+`--target URL` still works and takes precedence. But anything on a command line, the password included, is visible to every user on the machine who runs `ps`, and it ends up in your shell history. From `.env`, the URL only ever lives in environment variables, and `pg_restore` gets the password through `PGPASSWORD`.
+
+`pgb` treats `RESTORE_DATABASE_URL` the same way as `DATABASE_URL`. `localhost` works, and so does a Compose service name with `PGB_NETWORK`.
+
+## Overwriting production
+
+A restore into the same database as `DATABASE_URL` is refused. To overwrite production deliberately:
+
+```bash
+pgb restore 2026-11-17T020000Z --to-production
+```
+
+You'll then have to type the database name at an interactive terminal to confirm. `pgb` gives the container a terminal when you run it from one.
+
+<Aside type="caution">
+Roles and ownership aren't in the dump (`--no-owner --no-acl`), so restored objects belong to the user you restore as. Recreate roles and grants yourself.
+</Aside>
+
+## A plain dump file instead
+
+To restore somewhere the tool can't reach, or to hand the dump to someone, decrypt it to a normal `pg_dump` file:
+
+<Tabs syncKey="tool">
+<TabItem label="pgb">
+
+```bash
+pgb decrypt 2026-11-17T020000Z --out /out/shop.dump
+```
+
+</TabItem>
+<TabItem label="docker">
+
+```bash
+mkdir -p out
+docker run --rm -it --env-file .env -v "$PWD/out:/out" --user "$(id -u):$(id -g)" \
+  ghcr.io/iotabyt/pgbackup-r2:pg17 decrypt 2026-11-17T020000Z --out /out/shop.dump
+```
+
+</TabItem>
+</Tabs>
+
+The file appears as `out/shop.dump`. Restore it with:
+
+```bash
+pg_restore --no-owner --no-acl -d <database> out/shop.dump
+```
+
+A `.dump.age` you've already downloaded works too. Put it in `out/` and decrypt it with no S3 settings at all:
+
+```bash
+pgb decrypt --file /out/2026-11-17T020000Z.dump.age --out /out/shop.dump
+```
+
+If the manifest (`.manifest.age`) sits next to it, the checksum is checked as well.
+
+## Next
+
+**[Troubleshooting](/troubleshooting/)**: fixes for common problems, and every doctor message.

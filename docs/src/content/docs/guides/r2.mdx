@@ -1,0 +1,94 @@
+---
+title: Set up R2
+description: Create a Cloudflare R2 bucket and an API token for pgbackup-r2, step by step.
+next:
+  link: /concepts/keys/
+  label: Keys and security
+---
+
+import { Steps, Aside } from "@astrojs/starlight/components";
+import Figure from "../../../components/Figure.astro";
+
+R2 has no egress fees, so downloading backups for drills and restores costs nothing. The free tier (10 GB) is enough for most small databases. You need a Cloudflare account, and R2 asks for a payment method even on the free tier.
+
+## Create the bucket
+
+In the [Cloudflare dashboard](https://dash.cloudflare.com):
+
+<Steps>
+
+1. Click **R2 Object Storage** in the sidebar. If this is your first time, accept the R2 terms.
+
+   <Figure file="r2-1-sidebar.png" alt="The dashboard sidebar with R2 Object Storage highlighted" />
+
+2. Click **Create bucket**. Name it, for example `acme-db-backups`. Leave **Location** on *Automatic* and **Default storage class** on *Standard*, then click **Create bucket**.
+
+   To keep the data in the EU, choose the **European Union (EU)** jurisdiction here. That bucket gets its own endpoint (see below).
+
+   <Figure file="r2-2-create-bucket.png" alt="The Create bucket form, filled in" />
+
+3. Leave **Public access** off. Backups are encrypted anyway, but nobody needs to read them over the web.
+
+</Steps>
+
+## Create an API token
+
+<Steps>
+
+1. Back on the R2 overview page, click **Manage API tokens** (under *Account details* → *API Tokens*).
+
+   <Figure file="r2-3-manage-tokens.png" alt="The R2 overview page, with Manage API tokens circled" />
+
+2. Click **Create Account API token**. (A *User API token* works too.)
+
+3. Give it a name like `pgbackup-acme`.
+
+4. Under **Permissions**, choose **Object Read & Write**. `prune` deletes old backups, and this permission includes that.
+
+5. Under **Specify bucket(s)**, choose **Apply to specific buckets only** and pick your bucket.
+
+   <Figure file="r2-4-token-form.png" alt="The token form: Object Read & Write, one bucket selected" />
+
+6. Leave **TTL** on *Forever*, or set an expiry and a reminder to rotate the token. Click **Create API Token**.
+
+7. Copy the **Access Key ID** and the **Secret Access Key**. The secret is shown only once. Also copy the endpoint shown for S3 clients.
+
+   <Figure file="r2-5-token-created.png" alt="The created token, keys blurred, endpoint visible" />
+
+</Steps>
+
+## Put them in `.env`
+
+```bash
+S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+S3_BUCKET=acme-db-backups
+S3_PREFIX=acme                  # a short name for the app; one bucket can hold many apps
+AWS_ACCESS_KEY_ID=<Access Key ID>
+AWS_SECRET_ACCESS_KEY=<Secret Access Key>
+```
+
+Leave `S3_REGION` unset: `auto` is right for R2.
+
+**EU jurisdiction buckets** use a different endpoint:
+
+```bash
+S3_ENDPOINT=https://<account-id>.eu.r2.cloudflarestorage.com
+```
+
+Then check it all with `pgb doctor`. It writes a tiny test file under the prefix and deletes it again.
+
+## A token for your laptop
+
+Drills and restores only read backups, so a token with **Object Read only** works for them. But every drill also writes a small record to `<prefix>/.drills/`, which is how `pgb list` and `pgb doctor` know when you last drilled. A read-only token can't write it. The drill still runs, with a warning, but it isn't remembered.
+
+To keep the records, give the laptop token **Object Read & Write** too, limited to the same bucket.
+
+<Aside>
+The token is the only thing standing between someone with your `.env` and your bucket. Limit each token to one bucket. Rotate a token if the machine it lives on is lost, but don't worry about the backups themselves: without the private key, they're unreadable.
+</Aside>
+
+## Next
+
+**[Keys and security](/concepts/keys/)**: where the public and private keys live, and what happens if you lose one.
+
+Also: keep using folders you already have, with lifecycle and lock rules ([Use your existing folders](/guides/existing-folders/)), or use something other than R2 ([Other storage](/guides/other-storage/)).

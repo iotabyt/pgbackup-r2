@@ -1,0 +1,108 @@
+---
+title: Use your existing folders
+description: Fit pgbackup-r2 into a bucket that already has daily/ and monthly/ folders, lifecycle rules and locks.
+next:
+  link: /concepts/retention/
+  label: Retention
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+By default, pgbackup-r2 manages retention itself: backups go straight under `S3_PREFIX`, and each backup deletes the ones older than `RETENTION_DAYS`, always keeping the newest `MIN_KEEP`. [Retention](/concepts/retention/) compares the two modes.
+
+If your bucket already has a layout, like `daily/` and `monthly/` folders cleaned up by lifecycle rules, set `TIERS`, and pgbackup-r2 fits into it.
+
+## TIERS
+
+```bash
+TIERS="daily=daily/ monthly=monthly/"      # tier=folder pairs, separated by spaces
+PRUNE=false                                # the default once TIERS is set
+```
+
+- **Folder names are yours.** Use `backups/nightly/`, `db/month/` or anything else. They live under `S3_PREFIX` if it's set.
+- **The tiers are** `hourly`, `daily`, `weekly` (ISO weeks), `monthly` and `yearly`, all in UTC.
+- **The most frequent tier gets the upload,** on every run.
+- **Every other tier gets a copy** of the first backup of each of its periods: the first of the week, the month or the year.
+  - The copy is made server-side, inside the bucket. It keeps its metadata and checksum, and nothing is uploaded twice.
+  - With `hourly` in the list, `daily` gets the first backup of each day.
+- **The bucket is the source of truth.** A period counts as covered if that tier's folder already has a backup from it. So a copy deleted by hand is made again on the next run.
+- **The bucket's lifecycle rules delete old backups,** not pgbackup-r2. With `PRUNE=true`, the tool also prunes the most frequent tier by `RETENTION_DAYS`, and never touches the other tiers.
+- **Files that aren't pgbackup-r2 backups are never touched.** That covers other file names and an older tool's dumps. `list` ignores them, and `doctor` says how many it found: "12 other files in daily/ not made by pgbackup-r2".
+- **Every command sees every tier.**
+  - `list` shows a tier column.
+  - `latest` is the newest backup in any tier.
+  - Any backup can be named `<tier>/<stamp>`, as in `pgb drill monthly/2026-11-01T020000Z`.
+- **A delete refused by a lock or retention rule is a warning** ("locked, skipped"), never a failed backup.
+- **A typo in `TIERS` stops every command** with a plain message and an example.
+
+## Let it look for you
+
+With the S3 settings in `.env`:
+
+```text
+$ pgb init --detect
+Found folders daily/ (lifecycle: delete after 30 days) and monthly/ (delete after 365 days).
+Suggested: TIERS="daily=daily/ monthly=monthly/"   PRUNE=false
+
+    TIERS="daily=daily/ monthly=monthly/"
+    PRUNE=false
+
+Write these into .env? [y/N]
+```
+
+It lists the folders directly under `S3_PREFIX` and reads the bucket's lifecycle rules. If the token isn't allowed to read them, it carries on without. It guesses each folder's tier from its name: `nightly` is daily, `weekly-snapshots` is weekly, and a folder like `misc/` is left out. It writes the lines only if you say yes, replacing any `TIERS=` and `PRUNE=` lines already there. `--yes` skips the question, for scripts.
+
+`pgb doctor` shows the same suggestion. Once `TIERS` is set, it shows how each tier looks instead. `pgb detect` runs the check without offering to change `.env`.
+
+## Example: lifecycle and lock rules on R2
+
+This example keeps `shop/daily/` for 30 days and `shop/monthly/` for a year, and locks every backup against deletion for its first 7 days.
+
+**Lifecycle rules.** In the Cloudflare dashboard, open **R2** and your bucket, then **Settings** → **Object lifecycle rules** → **Add rule**:
+
+| Rule name | Prefix | Action |
+|---|---|---|
+| `shop-daily-30d` | `shop/daily/` | Delete uploaded objects after **30 days** |
+| `shop-monthly-365d` | `shop/monthly/` | Delete uploaded objects after **365 days** |
+
+Or set them through the S3 API with the AWS CLI. This replaces all of the bucket's lifecycle rules, so include any you already have:
+
+```bash
+aws s3api put-bucket-lifecycle-configuration \
+  --endpoint-url https://<account-id>.r2.cloudflarestorage.com --bucket acme-db-backups \
+  --lifecycle-configuration '{"Rules": [
+    {"ID": "shop-daily-30d",    "Status": "Enabled", "Filter": {"Prefix": "shop/daily/"},   "Expiration": {"Days": 30}},
+    {"ID": "shop-monthly-365d", "Status": "Enabled", "Filter": {"Prefix": "shop/monthly/"}, "Expiration": {"Days": 365}}
+  ]}'
+```
+
+**Bucket lock rules.** **Settings** → **Bucket lock rules** → **Add rule**, once per tier folder:
+
+| Rule name | Prefix | Retention |
+|---|---|---|
+| `shop-daily-lock-7d` | `shop/daily/` | **7 days** |
+| `shop-monthly-lock-7d` | `shop/monthly/` | **7 days** |
+
+Nobody can delete or overwrite a backup in its first week, not even someone with a leaked token. Keep every lock shorter than the lifecycle rule for the same files.
+
+<Aside>
+Lock the tier folders rather than all of `shop/`. `pgb doctor` writes and deletes a tiny test file directly under the prefix. If that file is locked, doctor says so, and it stays until the lock ends.
+</Aside>
+
+### Keep `.drills/` writable
+
+Every drill writes a small record to `<prefix>/.drills/`, and that's what `list` and `doctor` read to tell you when you last drilled. Locks and lifecycle rules on the tier folders don't touch it. But:
+
+- **Don't lock `.drills/`.** Each record is a new file, but there's no reason to protect it.
+- **Mind lifecycle rules on the whole prefix.** If one covers all of `shop/`, make it longer than 35 days. Otherwise the last record can expire, and `doctor` reports the bucket as never drilled.
+
+## Other storage
+
+The same layout works elsewhere:
+
+- **AWS S3** uses the same lifecycle JSON, with [Object Lock](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html) in place of R2's bucket locks.
+- **Backblaze B2** has its own lifecycle settings per prefix.
+
+## Next
+
+**[Retention](/concepts/retention/)**: tool-managed and bucket-managed retention side by side.

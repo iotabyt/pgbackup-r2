@@ -1,0 +1,123 @@
+---
+title: App on a VPS
+description: Ama's setup. Nightly backups on a VPS running Docker Compose, drills from her laptop.
+next:
+  link: /guides/monthly-drills/
+  label: Monthly drills
+---
+
+import { Steps, Tabs, TabItem, Aside } from "@astrojs/starlight/components";
+
+Ama runs a shop app on a small VPS. Her `compose.yml` has `web` and `db` (Postgres 17), in a project called `shop`, so Docker's network for it is `shop_default`. She wants:
+
+- nightly backups taken on the VPS
+- monthly drills from her laptop
+- the private key never on the VPS
+
+## On the VPS
+
+<Steps>
+
+1. **Install `pgb` and make a folder,** as the user that runs Docker:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/install.sh | sh
+   mkdir -p ~/backups/shop && cd ~/backups/shop
+   pgb init
+   nano .env
+   ```
+
+2. **Fill in `.env`.** `db` only exists on the Compose network, so `PGB_NETWORK` joins it:
+
+   ```bash
+   PG_MAJOR=17
+   S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+   S3_BUCKET=ama-backups
+   S3_PREFIX=shop
+   AWS_ACCESS_KEY_ID=...                       # an Object Read & Write token
+   AWS_SECRET_ACCESS_KEY=...
+   DATABASE_URL=postgresql://shop:<password>@db:5432/shop
+   PGB_NETWORK=shop_default                    # so "db" resolves
+   AGE_RECIPIENTS=age1...                      # the public key only
+   AGE_IDENTITY=                               # empty on the server
+   HEARTBEAT_URL=https://hc-ping.com/<uuid>
+   ```
+
+   `docker network ls` lists the network names if you're not sure of yours.
+
+3. **Check, back up once, and start the nightly container:**
+
+   ```bash
+   pgb doctor                # ✓ for Docker, .env, database and bucket; "-" for the absent private key
+   pgb backup                # a first backup now
+   pgb nightly start         # container pgbackup-shop, backing up at 02:00 UTC
+   pgb nightly status
+   ```
+
+</Steps>
+
+`pgb nightly` runs `schedule` in a container named `pgbackup-<S3_PREFIX>`, with `--restart unless-stopped`, so it comes back after reboots. `pgb nightly logs -f` follows its log, and `pgb nightly stop` removes it.
+
+## On her laptop
+
+A separate folder with its own `.env`:
+
+- **the same bucket settings,** with a token that can also write drill records (see [Set up R2](/guides/r2/#a-token-for-your-laptop))
+- **`AGE_IDENTITY` filled in**
+- **no `DATABASE_URL` or `PGB_NETWORK`**
+
+```bash
+pgb verify                # minutes after the first backup: does it open?
+pgb drill                 # restores into a throwaway Postgres 17 and compares row counts
+```
+
+After that, a drill once a month: see [Monthly drills](/guides/monthly-drills/). `pgb doctor` on the laptop warns once the last successful drill is more than 35 days old.
+
+## Upgrading Postgres
+
+When she moves to Postgres 18, she sets `PG_MAJOR=18` in both `.env` files. Then, on the VPS:
+
+```bash
+pgb update
+pgb nightly stop && pgb nightly start
+```
+
+See [Postgres versions](/concepts/postgres-versions/) for why the image has to match.
+
+## The same thing as a Compose service
+
+If Ama would rather keep everything in `compose.yml`, the backup can be a service next to the database instead of `pgb nightly`:
+
+```yaml
+services:
+  db:
+    image: postgres:17
+    # ... her existing database
+
+  backup:
+    image: ghcr.io/iotabyt/pgbackup-r2:pg17
+    restart: unless-stopped
+    env_file: backup.env      # the same settings, kept out of git
+    depends_on: [db]
+```
+
+```bash
+docker compose up -d backup
+docker compose run --rm backup backup     # a first backup now
+docker compose logs backup
+```
+
+The service runs `schedule` by default: it sleeps until `BACKUP_AT`, backs up, prunes and pings. Its log is plain timestamped lines:
+
+```text
+2026-11-18T02:00:01Z INFO backing up postgresql://***@db:5432/shop to s3://ama-backups/shop/2026-11-18T020001Z.dump.age
+2026-11-18T02:00:23Z INFO backed up shop/2026-11-18T020001Z.dump.age (48.2 MB, 37 tables) in 22.1s
+```
+
+<Aside>
+On the server, `.env` only needs the **public** key. Anyone who takes over the server gets encrypted blobs and nothing else. See [Keys and security](/concepts/keys/).
+</Aside>
+
+## Next
+
+**[Monthly drills](/guides/monthly-drills/)**: prove a backup restores, every month.

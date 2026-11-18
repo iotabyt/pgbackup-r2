@@ -1,0 +1,72 @@
+---
+// The 404 page, in Starlight's layout. Cloudflare serves it for any unknown URL
+// (not_found_handling: "404-page" in wrangler.jsonc).
+import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro";
+---
+
+<StarlightPage
+  frontmatter={{
+    title: "Page not found",
+    description: "This page doesn't exist. Search the docs, or start from the introduction.",
+    template: "splash",
+    editUrl: false,
+    lastUpdated: false,
+    pagefind: false,
+    prev: false,
+    next: false,
+  }}
+>
+  <p>
+    There's nothing at this address. It may have moved when the docs were reorganised, or the
+    link has a typo.
+  </p>
+  <p>
+    <button type="button" class="pgb-search-hint">Search the docs</button>
+    <span class="pgb-kbd-hint">or press <kbd>/</kbd> or <kbd>Ctrl</kbd> <kbd>K</kbd></span>
+  </p>
+  <p>Or start from one of these:</p>
+  <ul>
+    <li><a href="/">Introduction</a></li>
+    <li><a href="/start/quick-start/">Quick start</a></li>
+    <li><a href="/guides/restoring/">Restoring on a bad day</a></li>
+    <li><a href="/troubleshooting/">Troubleshooting</a></li>
+  </ul>
+</StarlightPage>
+
+<script>
+  // Open Starlight's own search dialog. A bundled module script, so the CSP allows it as 'self'.
+  // Stop this click here: Starlight closes the dialog on any click outside it, and this one
+  // would otherwise bubble up right after the dialog opened.
+  document.querySelector(".pgb-search-hint")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    document.querySelector<HTMLButtonElement>("site-search button[data-open-modal]")?.click();
+  });
+</script>
+
+<style>
+  .pgb-search-hint {
+    font: inherit;
+    font-weight: 600;
+    padding: 0.5rem 1.1rem;
+    border-radius: 999rem;
+    border: 1px solid var(--sl-color-accent);
+    background: var(--sl-color-accent);
+    color: var(--sl-color-text-invert);
+    cursor: pointer;
+  }
+  .pgb-search-hint:hover {
+    filter: brightness(0.92);
+  }
+  .pgb-kbd-hint {
+    margin-inline-start: 0.75rem;
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-sm);
+  }
+  kbd {
+    font-family: var(--__sl-font-mono);
+    font-size: 0.85em;
+    padding: 0.05rem 0.35rem;
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 0.25rem;
+  }
+</style>

@@ -1,0 +1,19 @@
+---
+// Starlight's own footer (edit link, last updated, pagination), then the Iotabyt line.
+import Default from "@astrojs/starlight/components/Footer.astro";
+import iotabytMark from "../assets/iotabyt-mark.svg";
+import iotabytMarkReversed from "../assets/iotabyt-mark-reversed.svg";
+---
+
+<Default />
+<p class="pgb-brand">
+  pgbackup-r2 is an open-source tool from <a href="https://www.iotabyt.com"
+    ><img src={iotabytMark.src} alt="" width="16" height="16" class="dark:sl-hidden" /><img
+      src={iotabytMarkReversed.src}
+      alt=""
+      width="16"
+      height="16"
+      class="light:sl-hidden"
+    /><strong>Iotabyt</strong></a
+  >. MIT licensed.
+</p>

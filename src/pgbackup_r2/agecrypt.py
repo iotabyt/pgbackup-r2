@@ -32,12 +32,15 @@ def check_recipients(recipients: Sequence[str]) -> tuple[str, ...]:
         if r.upper().startswith("AGE-SECRET-KEY-"):
             raise ConfigError(
                 "AGE_RECIPIENTS contains a private key (AGE-SECRET-KEY-...). Only the age1... "
-                "public key belongs on the server; keep the private key off it"
+                "public key belongs on the server; keep the private key off it",
+                hint="Put the age1... public key in AGE_RECIPIENTS, and the private key in "
+                "AGE_IDENTITY on your laptop only",
             )
         if not (r.startswith(PUBLIC_PREFIX) or r.startswith("ssh-")):
             raise ConfigError(
                 f"AGE_RECIPIENTS entry starting {r[:8]!r}... isn't an age public key "
-                "(they start with age1)"
+                "(they start with age1)",
+                hint="Copy the AGE_RECIPIENTS=age1... line from `pgb keygen --plain`",
             )
     return tuple(recipients)
 
@@ -88,10 +91,14 @@ def _check_identity_file(path: str) -> None:
         with open(path, encoding="utf-8", errors="replace") as f:
             text = f.read()
     except OSError as exc:
-        raise ConfigError(f"can't read AGE_IDENTITY_FILE {path}: {exc.strerror}") from None
+        raise ConfigError(
+            f"can't read AGE_IDENTITY_FILE {path}: {exc.strerror}",
+            hint="Point AGE_IDENTITY_FILE at a readable key file, or use AGE_IDENTITY instead",
+        ) from None
     if SECRET_PREFIX not in text and "PRIVATE KEY" not in text:
         raise ConfigError(
-            f"AGE_IDENTITY_FILE {path} doesn't contain an AGE-SECRET-KEY-1... private key"
+            f"AGE_IDENTITY_FILE {path} doesn't contain an AGE-SECRET-KEY-1... private key",
+            hint="Point AGE_IDENTITY_FILE at the file with the AGE-SECRET-KEY-1... line",
         )
 
 
@@ -158,7 +165,11 @@ def keygen() -> tuple[str, str]:
     out = run(["age-keygen"], what="age-keygen").stdout.decode()
     secret = next((ln.strip() for ln in out.splitlines() if ln.startswith(SECRET_PREFIX)), None)
     if not secret:
-        raise CommandError("age-keygen didn't print a private key")
+        raise CommandError(
+            "age-keygen didn't print a private key",
+            hint="This is a bug in the image: please report it at "
+            "https://github.com/iotabyt/pgbackup-r2/issues",
+        )
     public = next(
         (
             ln.split(":", 1)[1].strip()

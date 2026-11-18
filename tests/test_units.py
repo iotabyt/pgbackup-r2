@@ -244,3 +244,66 @@ def test_restore_target_prefers_flag_then_env():
         Settings.from_env({"S3_BUCKET": "b"}).restore_target(None)
     with pytest.raises(ConfigError):
         Settings.from_env({"S3_BUCKET": "b", "RESTORE_DATABASE_URL": "mysql://h/db"})
+
+
+@pytest.mark.parametrize("columns", [120, 80])
+def test_keygen_panels_same_width_and_keys_never_cut(columns):
+    import io
+
+    from rich.console import Console
+
+    from pgbackup_r2 import ui
+
+    public = "age1" + "q" * 58
+    secret = "AGE-SECRET-KEY-1" + "Q" * 58
+    buf = io.StringIO()
+    old = (ui._state.interactive, ui._state.console)
+    ui._state.interactive = True
+    ui._state.console = Console(file=buf, width=columns, highlight=False, color_system=None)
+    try:
+        ui.keys(public, secret, "")
+    finally:
+        ui._state.interactive, ui._state.console = old
+    lines = buf.getvalue().splitlines()
+    # Whole key lines, never truncated or wrapped, so copying one gets the full key.
+    assert any(line.strip() == f"AGE_RECIPIENTS={public}" for line in lines)
+    assert any(line.strip() == f"AGE_IDENTITY={secret}" for line in lines)
+    borders = [line.rstrip() for line in lines if line.strip().startswith("─")]
+    if columns == 120:
+        assert len(borders) == 4  # top and bottom of each panel
+        assert len({len(b) for b in borders}) == 1
+
+
+def test_connection_hint():
+    from pgbackup_r2.pg import connection_hint
+
+    text = (
+        'psql failed (exit 2): psql: error: could not translate host name "db" to address: '
+        "Name or service not known"
+    )
+    hint = connection_hint(text)
+    assert hint and 'Nothing called "db"' in hint
+    assert "PGB_NETWORK=<project>_default" in hint and "localhost" in hint
+    refused = (
+        'connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused'
+    )
+    assert "localhost is the container itself" in connection_hint(
+        refused, "postgresql://a:b@localhost/x"
+    )
+    assert connection_hint(refused, "postgresql://a:b@db.example.com/x") is None
+    assert connection_hint("permission denied for table x") is None
+
+
+@pytest.mark.parametrize(
+    "error, words",
+    [
+        ('FATAL:  password authentication failed for user "app"', "user or password"),
+        ('FATAL:  database "shop" does not exist', "database name"),
+        ("timeout expired", "host and port"),
+        ("FATAL:  no pg_hba.conf entry for host, SSL off", "sslmode=require"),
+    ],
+)
+def test_connection_hint_for_common_failures(error, words):
+    from pgbackup_r2.pg import connection_hint
+
+    assert words in (connection_hint(f"psql failed (exit 2): {error}") or "")

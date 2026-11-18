@@ -1,0 +1,50 @@
+name: docs
+
+# Checks pull requests that touch the docs site. Cloudflare builds and deploys the site on
+# its own (Workers Builds, watching docs/*), so this workflow never deploys anything.
+on:
+  pull_request:
+    # CHANGELOG.md too: the site's Changelog page imports it.
+    paths: ["docs/**", "CHANGELOG.md"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # full history, for the "Last updated" dates
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: docs/.nvmrc
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+
+      - run: npm ci
+
+      # astro check, astro build, then the CSP hashes for dist/_headers.
+      - run: npm run build
+
+      # Internal links and #anchors only (--offline), so a slow or flaky external site can
+      # never fail a PR. Directory links resolve to their index.html, the way Cloudflare
+      # serves them.
+      - name: Check links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          lycheeVersion: v0.24.2
+          workingDirectory: docs
+          args: >-
+            --offline
+            --root-dir ${{ github.workspace }}/docs/dist
+            --index-files index.html
+            --include-fragments
+            --no-progress
+            'dist/**/*.html'
+          fail: true

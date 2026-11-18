@@ -4,7 +4,11 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    # Docs-only and Markdown-only changes don't need the Python tests or image builds.
+    # GitHub doesn't evaluate path filters for tag pushes, so v* tags always build images.
+    paths-ignore: ["docs/**", "**/*.md"]
   pull_request:
+    paths-ignore: ["docs/**", "**/*.md"]
 
 permissions:
   contents: read
@@ -42,10 +46,28 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check
       - run: uv run ruff format --check
+      - run: uv run shellcheck scripts/pgb scripts/install.sh
       - name: pytest
         run: uv run pytest -v
         env:
           PGBACKUP_TEST_URL: postgresql://postgres:pw@localhost:5432/postgres
+
+  # macOS ships bash 3.2, so pgb must run on it. (test_pgb.py also checks this when Docker is
+  # available; this job keeps it visible on its own.)
+  bash-3-2:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: shellcheck, pgb help, version and init under bash 3.2
+        run: |
+          docker run --rm -v "$PWD:/w:ro" -w /w bash:3.2 sh -euc '
+            apk add --no-cache shellcheck >/dev/null
+            shellcheck scripts/pgb scripts/install.sh
+            bash --version | head -n 1
+            bash scripts/pgb help
+            bash scripts/pgb version
+            cd "$(mktemp -d)" && bash /w/scripts/pgb init && test -f .env && test -d out
+          '
 
   image:
     needs: test

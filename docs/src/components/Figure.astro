@@ -1,0 +1,80 @@
+---
+/**
+ * A screenshot slot. Pass the file name of an image in src/assets/screenshots/. Until that
+ * file exists, a neat placeholder box shows what the screenshot will be.
+ *
+ *   <Figure file="r2-2-create-bucket.png" alt="The Create bucket form" caption="..." />
+ */
+import { Image } from "astro:assets";
+import type { ImageMetadata } from "astro";
+
+interface Props {
+  file: string;
+  alt: string;
+  caption?: string;
+}
+
+const { file, alt, caption } = Astro.props;
+const images = import.meta.glob<{ default: ImageMetadata }>(
+  "../assets/screenshots/*.{png,jpg,jpeg,webp,avif}",
+  { eager: true },
+);
+const found = images[`../assets/screenshots/${file}`]?.default;
+---
+
+<figure class="pgb-figure not-content">
+  {
+    found ? (
+      <Image src={found} alt={alt} widths={[720, 1440]} sizes="(min-width: 50rem) 45rem, 100vw" />
+    ) : (
+      <div class="pgb-figure-placeholder" role="img" aria-label={`Screenshot to come: ${alt}`}>
+        <span class="pgb-figure-label">Screenshot</span>
+        <span>{alt}</span>
+        <code>src/assets/screenshots/{file}</code>
+      </div>
+    )
+  }
+  {caption && <figcaption>{caption}</figcaption>}
+</figure>
+
+<style>
+  .pgb-figure {
+    margin: 1rem 0 1.5rem;
+  }
+  .pgb-figure :global(img) {
+    border: 1px solid var(--sl-color-hairline);
+    border-radius: 0.375rem;
+    height: auto;
+    max-width: 100%;
+  }
+  .pgb-figure-placeholder {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    min-height: 9rem;
+    padding: 1.25rem;
+    border: 1px dashed var(--sl-color-gray-5);
+    border-radius: 0.375rem;
+    background: var(--pgb-raised);
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-sm);
+  }
+  .pgb-figure-label {
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: var(--sl-text-2xs);
+  }
+  .pgb-figure-placeholder code {
+    font-size: var(--sl-text-2xs);
+    word-break: break-all;
+  }
+  figcaption {
+    margin-top: 0.5rem;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+  }
+</style>

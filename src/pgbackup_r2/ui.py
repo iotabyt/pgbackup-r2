@@ -198,6 +198,24 @@ def out(text: str = "") -> None:
         print(text)
 
 
+WARN = "warn"
+
+
+def check(ok: bool | str | None, label: str, fix: str | None = None) -> None:
+    """One doctor line: ✓ passed, ✗ failed (with the fix underneath), ⚠ worth a look
+    (ok=ui.WARN), or - skipped/info."""
+    mark = {True: "✓", False: "✗", WARN: "⚠", None: "-"}[ok]
+    if not _state.interactive:
+        print(f"{mark} {label}")
+        if fix:
+            print(f"    {fix}")
+        return
+    colour = {True: "green", False: "red", WARN: "yellow", None: "dim"}[ok]
+    _print(f"[{colour}]{mark}[/] {_escape(label)}", soft_wrap=True)
+    if fix:
+        _print(f"    [dim]{_escape(fix)}[/]", soft_wrap=True)
+
+
 # --- tables and results -----------------------------------------------------------------
 
 
@@ -271,26 +289,41 @@ def keys(public: str, secret: str, plain_template: str) -> None:
     )
     _print("  2. Put the [bold green]PUBLIC[/] key on your server.\n")
     # HORIZONTALS: no side borders, so copying a key line doesn't pick up box characters.
-    _print(
-        Panel(
+    # Both panels get the same width: the widest key line or title, plus padding.
+    from rich.text import Text
+
+    panels = [
+        (
             f"AGE_RECIPIENTS={public}",
-            title="[bold green]PUBLIC key[/] · server .env · safe to share",
-            title_align="left",
-            border_style="green",
-            box=box.HORIZONTALS,
-            expand=False,
+            "[bold green]PUBLIC key[/] · server .env · safe to share",
+            "green",
         ),
-        soft_wrap=True,
-    )
-    _print(
-        Panel(
+        (
             f"AGE_IDENTITY={secret}",
-            title="[bold red]PRIVATE key[/] · your laptop's .env · keep this secret",
-            title_align="left",
-            border_style="red",
-            box=box.HORIZONTALS,
-            expand=False,
+            "[bold red]PRIVATE key[/] · your laptop's .env · keep this secret",
+            "red",
         ),
-        soft_wrap=True,
+    ]
+    width = 4 + max(
+        max(Text(body).cell_len, Text.from_markup(title).cell_len + 2) for body, title, _ in panels
     )
+    console_width = getattr(_state.console, "width", width)
+    for body, title, colour in panels:
+        if width > console_width:
+            # Too narrow for a panel, which would cut the key short. Print the whole line
+            # unwrapped and let the terminal wrap it, so copying it still gets every character.
+            _print(f"[{colour}]──[/] {title}")
+            _print(Text(body), soft_wrap=True)
+            continue
+        _print(
+            Panel(
+                body,
+                title=title,
+                title_align="left",
+                border_style=colour,
+                box=box.HORIZONTALS,
+                width=width,
+            ),
+            soft_wrap=True,
+        )
     _print("[dim]Nothing was written to disk. Use --plain for copy-paste friendly output.[/]")

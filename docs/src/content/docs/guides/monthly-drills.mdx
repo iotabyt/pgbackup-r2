@@ -1,0 +1,93 @@
+---
+title: Monthly drills
+description: Prove a backup restores every month, from your laptop or from GitHub Actions.
+next:
+  link: /guides/restoring/
+  label: Restoring on a bad day
+---
+
+import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
+
+A backup you've never restored is a hope, not a backup. A drill turns it into a fact:
+
+1. It restores a real backup into a throwaway Postgres.
+2. It compares every table's row count with the manifest written at backup time.
+3. It records the result in the bucket.
+
+`pgb doctor` warns when the last successful drill is more than 35 days old, so once a month is the rhythm.
+
+## From your laptop
+
+In a folder whose `.env` has the private key (`AGE_IDENTITY`) and the bucket settings:
+
+<Tabs syncKey="tool">
+<TabItem label="pgb">
+
+```bash
+pgb drill                          # the newest backup
+pgb drill 2026-11-01T020000Z       # a specific one; `pgb list` shows the stamps
+pgb drill monthly/2026-11-01T020000Z   # with TIERS: a backup in a given tier
+```
+
+</TabItem>
+<TabItem label="docker">
+
+`pgb drill` starts its own throwaway database. Without `pgb`, the [`examples/drill`](https://github.com/iotabyt/pgbackup-r2/tree/main/examples/drill) folder does the same with Docker Compose:
+
+```bash
+cd examples/drill
+cp .env.example .env              # fill it in
+docker compose run --rm drill
+docker compose down -v            # throw the scratch database away
+```
+
+</TabItem>
+</Tabs>
+
+`pgb drill`:
+
+1. starts a throwaway `postgres:<PG_MAJOR>` on a private Docker network, with a random password, stored in memory only
+2. waits for it to be ready (up to 60 seconds)
+3. downloads the backup, checks its checksum, decrypts it and restores it
+4. compares every table's row count with the manifest
+5. records the result in `<prefix>/.drills/`
+6. removes the database and the network, even if the drill fails or you press Ctrl+C
+
+Its exit code is the drill's: 0 for PASS, 1 for FAIL.
+
+A failure lists every problem:
+
+```text
+FAIL  shop/2026-11-18T020000Z.dump.age  (48.2 MB, restored in 21.4s)
+  public.orders: expected 81,204 rows, restored 0 (off by 81,204, allowed 812)
+  missing table public.invoices (manifest has 2,310 rows)
+```
+
+Small differences are allowed for busy tables, because row counts are taken just before the dump, in a separate transaction. `DRILL_TOLERANCE` (default `0.01`, so 1%) sets how much. Empty tables must match exactly.
+
+## Drill records
+
+Every drill, pass or fail, writes a small JSON file to `<prefix>/.drills/<time>.json`. It holds:
+
+- the backup tested, and PASS or FAIL
+- the number of tables and rows
+- how long the drill took, and the tool version
+
+There's no data from the database in it, so it isn't encrypted. `list` and `prune` skip the folder.
+
+- `pgb list` ends with `Last drill: PASS, 12 days ago`.
+- `pgb doctor` shows ✓ for a successful drill within 35 days. It shows ⚠ "Your last successful drill was 41 days ago." when it's older, and ⚠ "This bucket has never been drilled." when there's none.
+
+The token needs write access to `.drills/` for this. With a read-only token, the drill still runs, but it warns and isn't recorded.
+
+## From GitHub Actions
+
+[`examples/monthly-drill.yml`](https://github.com/iotabyt/pgbackup-r2/blob/main/examples/monthly-drill.yml) runs a drill on the 1st of every month, for each app prefix, against a Postgres service container. Copy it to `.github/workflows/` in a **private** repo and add the secrets listed at the top of the file. A failed drill fails the workflow, so GitHub emails you. If you set `DRILL_FAIL_URL`, the failure summary is also POSTed there.
+
+<Aside type="caution">
+This workflow needs the **private** key. Keep it in a different repo or environment from any backup workflow, and limit who can run it.
+</Aside>
+
+## Next
+
+**[Restoring on a bad day](/guides/restoring/)**: the steps for when you need the data back.

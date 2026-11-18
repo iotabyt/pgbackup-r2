@@ -1,0 +1,155 @@
+---
+title: pgb commands
+description: Every pgb command and flag, with the plain docker run behind it.
+---
+
+`pgb` runs pgbackup-r2 through Docker, using the `.env` and `out/` of the folder you're in. Some commands are its own, and everything else goes straight to the image.
+
+## What every command gets
+
+`pgb <command>` is `docker run --rm` plus:
+
+- **`--env-file .env`**, if the current folder has a `.env`.
+- **The image `ghcr.io/iotabyt/pgbackup-r2:pg<PG_MAJOR>`.** `PG_MAJOR` comes from `.env`, and defaults to 16. A `PG_MAJOR` set in your shell takes precedence.
+- **`-v "$PWD/out:/out"`**, if `./out` exists. `decrypt` creates it first, because otherwise Docker would create it owned by root.
+- **`-it`**, when you're at a terminal.
+- **`--user "$(id -u):$(id -g)"`** on Linux, so files in `./out` are yours.
+- **Network options** for commands that talk to the database:
+  - `--network <PGB_NETWORK>`, if `PGB_NETWORK` is set.
+  - Otherwise, for a `localhost` or `127.0.0.1` URL: `--network host` on Linux, or the host rewritten to `host.docker.internal` on Docker Desktop.
+  - This applies to `DATABASE_URL` and `RESTORE_DATABASE_URL`.
+  - Rewritten URLs are passed by name (`-e VAR`), never on the command line.
+
+For example, on Linux, `pgb verify` is:
+
+```bash
+docker run --rm -it --env-file .env -v "$PWD/out:/out" --user "$(id -u):$(id -g)" \
+  ghcr.io/iotabyt/pgbackup-r2:pg16 verify
+```
+
+In PowerShell, leave out `--user`, and use `` ` `` instead of `\` to continue a line.
+
+## pgb's own commands
+
+### `pgb init [--detect] [--yes]`
+
+Writes a `.env` template here and creates `out/`. The 7 settings a backup needs come first, uncommented. Everything else is commented out under "Optional", at its default. It never overwrites an existing `.env`. On Linux and macOS, the file is set to mode 600. It then prints the next steps.
+
+**`--detect`:** with an existing `.env`, looks at the bucket and suggests `TIERS` and `PRUNE` lines. It writes them only if you confirm, or if you pass **`--yes`**. Without a terminal and without `--yes`, `.env` is left alone. See [Use your existing folders](/guides/existing-folders/).
+
+<details>
+<summary>Without pgb</summary>
+
+Copy [`examples/drill/.env.example`](https://github.com/iotabyt/pgbackup-r2/blob/main/examples/drill/.env.example) to `.env`, fill it in, then `chmod 600 .env && mkdir -p out`. For detection: `docker run --rm --env-file .env ghcr.io/iotabyt/pgbackup-r2:pg16 detect`.
+
+</details>
+
+### `pgb doctor`
+
+Checks that Docker is running and `.env` exists, then runs the image's [`doctor`](/reference/cli/#doctor) with the same network options as a backup. Exits 1 if any check fails. [Troubleshooting](/troubleshooting/#doctors-messages) explains every message.
+
+<details>
+<summary>Without pgb</summary>
+
+```bash
+docker run --rm -it --env-file .env ghcr.io/iotabyt/pgbackup-r2:pg16 doctor
+```
+
+Add `--network <project>_default` for a database in Docker Compose, or `--network host` for one on `localhost` (Linux).
+
+</details>
+
+### `pgb drill [STAMP]`
+
+A full drill with no compose file:
+
+1. Creates a private Docker network.
+2. Starts `postgres:<PG_MAJOR>` there, with a random password and in-memory storage.
+3. Waits for it (up to 60 seconds).
+4. Runs the image's `drill` against it.
+5. Removes the database and the network afterwards, even after a failure or Ctrl+C.
+
+The exit code is the drill's. `STAMP` is `latest` (the default), a stamp, or `<tier>/<stamp>`.
+
+<details>
+<summary>Without pgb</summary>
+
+From a copy of [`examples/drill`](https://github.com/iotabyt/pgbackup-r2/tree/main/examples/drill):
+
+```bash
+docker compose run --rm drill
+docker compose down -v
+```
+
+</details>
+
+### `pgb nightly start|stop|status|logs`
+
+Scheduled backups in a background container named `pgbackup-<S3_PREFIX>`. It runs `schedule` with this folder's `.env` and `--restart unless-stopped`.
+
+| Command | What it does |
+|---|---|
+| `start` | Starts the container. If it's already running, says so and does nothing. Warns if `.env` contains the private key. |
+| `status` | Running or not, since when, restarts, and the last 10 log lines. Exits 3 if there's no container. |
+| `logs [-f]` | The last 100 log lines. `-f` follows. |
+| `stop` | Stops and removes the container. Backups already taken stay in the bucket. |
+
+<details>
+<summary>Without pgb</summary>
+
+```bash
+docker run -d --name pgbackup-acme --restart unless-stopped --env-file .env \
+  ghcr.io/iotabyt/pgbackup-r2:pg16          # schedule is the default command
+docker ps -a --filter name=pgbackup-acme
+docker logs -f pgbackup-acme
+docker rm -f pgbackup-acme
+```
+
+</details>
+
+### `pgb update`
+
+Pulls the image for the current `PG_MAJOR`, and prints the old and new pgbackup-r2 versions. If `pgb nightly` is running the old image, it tells you how to switch.
+
+<details>
+<summary>Without pgb</summary>
+
+```bash
+docker pull ghcr.io/iotabyt/pgbackup-r2:pg16
+```
+
+</details>
+
+### `pgb version`
+
+`pgb`'s own version, and the version inside the image. If the image isn't pulled yet, it says so.
+
+### `pgb help [COMMAND]`
+
+With no command: a short list of commands. With one, such as `pgb help drill`: what that command does, its usage and examples. pgb's own commands (`init`, `drill`, `nightly`, `update`, `version`) have their own help. For the rest, `pgb` shows the image's. `--help` or `-h` after any command shows the same, and on pgb's own commands it does nothing else: `pgb drill --help` doesn't start a database.
+
+A short list of commands. So do `pgb`, `pgb -h` and `pgb --help`.
+
+## Everything else
+
+Any other command goes straight to the image, with the options above. These are the [CLI commands](/reference/cli/):
+
+- `pgb backup [--no-prune]`
+- `pgb list`
+- `pgb verify [STAMP] [--file PATH]`
+- `pgb decrypt [STAMP] --out /out/FILE [--force] [--file PATH]`
+- `pgb restore [STAMP] [--target URL] [--to-production]`
+- `pgb prune [--dry-run]`
+- `pgb keygen [--plain]`
+- `pgb detect [--env-lines]`
+
+`pgb <command> --help` shows the image's help for any of them.
+
+## Environment
+
+`pgb` reads these from `.env`, or from your shell, which takes precedence:
+
+| Variable | What it does |
+|---|---|
+| `PG_MAJOR` | Picks the image tag and the drill's Postgres. Default 16. |
+| `PGB_NETWORK` | A Docker network to join, e.g. `myapp_default`. |

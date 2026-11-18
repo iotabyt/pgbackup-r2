@@ -331,3 +331,111 @@ def test_restore_target_from_env(env, monkeypatch, caplog):
     # --target still works, and wins over the env var.
     monkeypatch.setenv("RESTORE_DATABASE_URL", env["live"])
     assert main(["restore", "--target", env["scratch"]]) == 0
+
+
+def server_major(url: str) -> int:
+    return int(pg.psql(url, "SHOW server_version_num")) // 10000
+
+
+def test_doctor_all_good_and_leaves_nothing_in_the_bucket(env, monkeypatch, capsys):
+    monkeypatch.setenv("PG_MAJOR", str(server_major(env["live"])))
+    assert main(["doctor", "--plain"]) == 0
+    out = capsys.readouterr().out
+    assert "✓ Settings: everything a backup needs is set (storage: AWS S3)" in out
+    assert "✓ Database: connected to postgresql://***@" in out
+    assert f"✓ Bucket: s3://{BUCKET}/{PREFIX}/ is writable" in out
+    assert "✓ Keys: AGE_IDENTITY opens what is encrypted to AGE_RECIPIENTS" in out
+    assert "✗" not in out
+    assert out.rstrip().endswith("All checks passed.")
+    assert objects(env["s3"]) == []
+
+
+def test_doctor_reports_each_problem_with_a_fix(env, monkeypatch, capsys):
+    major = server_major(env["live"])
+    other_public, _ = make_keypair()
+    own_public = env["keys"][0]
+    monkeypatch.setenv("PG_MAJOR", str(major + 1))
+    monkeypatch.setenv("AGE_RECIPIENTS", other_public)
+    assert main(["doctor", "--plain"]) == 1
+    out = capsys.readouterr().out
+    assert f"but PG_MAJOR is {major + 1}" in out
+    assert f"Set PG_MAJOR={major} in .env" in out
+    assert "✗ Keys: AGE_IDENTITY can't open backups encrypted to AGE_RECIPIENTS" in out
+    assert f"AGE_IDENTITY's public key is {own_public}: add it to AGE_RECIPIENTS" in out
+    assert "2 checks failed." in out
+
+
+def test_doctor_missing_settings_and_unknown_host(env, monkeypatch, capsys):
+    monkeypatch.delenv("AGE_RECIPIENTS")
+    monkeypatch.delenv("AGE_IDENTITY_FILE")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://app:pw@db-that-does-not-exist.invalid/app")
+    assert main(["doctor", "--plain"]) == 1
+    out = capsys.readouterr().out
+    assert "✗ Settings: AGE_RECIPIENTS is not set" in out
+    assert "- AGE_IDENTITY isn't set: fine for a backup-only server" in out
+    assert "✗ Database: can't connect to postgresql://***@db-that-does-not-exist.invalid" in out
+    assert 'Nothing called "db-that-does-not-exist.invalid" can be found' in out
+    assert "PGB_NETWORK=<project>_default" in out
+    assert "pw" not in out.replace("pwd", "")
+
+
+def test_backup_with_tiers_then_drill_a_copy(env, monkeypatch, capsys):
+    from datetime import UTC, datetime
+
+    from pgbackup_r2 import commands
+
+    monkeypatch.setenv("TIERS", "daily=nightly/ monthly=monthly/")
+    for when in ("2026-11-18T02:00:00", "2026-11-18T14:00:00"):  # twice on the same day
+        moment = datetime.fromisoformat(when).replace(tzinfo=UTC)
+        monkeypatch.setattr(commands, "utcnow", lambda moment=moment: moment)
+        assert main(["backup", "--plain"]) == 0
+    keys = objects(env["s3"])
+    assert [k for k in keys if k.endswith(".dump.age")] == [
+        f"{PREFIX}/monthly/2026-11-18T020000Z.dump.age",
+        f"{PREFIX}/nightly/2026-11-18T020000Z.dump.age",
+        f"{PREFIX}/nightly/2026-11-18T140000Z.dump.age",
+    ]
+    assert f"{PREFIX}/monthly/2026-11-18T020000Z.manifest.age" in keys
+
+    capsys.readouterr()
+    assert main(["drill", "monthly/2026-11-18T020000Z"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith(f"PASS  {PREFIX}/monthly/2026-11-18T020000Z.dump.age")
+
+    monkeypatch.setenv("PG_MAJOR", str(server_major(env["live"])))
+    assert main(["doctor", "--plain"]) == 0
+    out = capsys.readouterr().out
+    assert f"✓ Tier daily: {PREFIX}/nightly/ gets every upload, 2 backups" in out
+    assert f"✓ Tier monthly: {PREFIX}/monthly/ gets copies, 1 backup" in out
+    assert "nightly/ has no lifecycle rule that deletes old files, and PRUNE is off" in out
+
+
+def drill_records(s3) -> list[dict]:
+    import json
+
+    keys = sorted(k for k in objects(s3) if k.startswith(f"{PREFIX}/.drills/"))
+    records = [json.loads(s3.get_object(Bucket=BUCKET, Key=k)["Body"].read()) for k in keys]
+    return sorted(records, key=lambda r: r["drilled_at"])
+
+
+def test_drill_records_pass_and_fail(env, capsys):
+    assert main(["backup"]) == 0
+    dump_key = dump_object(env["s3"])
+    assert main(["drill"]) == 0
+    sql(env["scratch"], "CREATE TABLE leftover (id int)")
+    assert main(["drill"]) == 1
+
+    passed, failed = drill_records(env["s3"])
+    assert passed["result"] == "PASS" and failed["result"] == "FAIL"
+    assert passed["backup"] == dump_key and passed["backup_stamp"] in dump_key
+    assert (passed["tables"], passed["rows"]) == (2, 5250)
+    assert failed["tables"] == 3  # the leftover table makes it fail
+    assert passed["seconds"] >= 0 and passed["tool_version"]
+    assert MARKER not in str(drill_records(env["s3"]))  # counts only, no data
+
+    capsys.readouterr()
+    assert main(["list"]) == 0
+    assert capsys.readouterr().out.rstrip().endswith("Last drill: FAIL, just now")
+    # The records don't show up as backups, and `prune` leaves them alone.
+    assert main(["prune"]) == 0
+    assert len(drill_records(env["s3"])) == 2

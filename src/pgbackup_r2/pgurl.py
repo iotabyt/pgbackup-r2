@@ -36,17 +36,21 @@ def parse_url(url: str) -> PgTarget:
         parts = urlsplit(url.strip())
         port = parts.port
     except ValueError as exc:
-        raise ConfigError(f"not a valid Postgres URL: {redact(url)} ({exc})") from None
+        raise ConfigError(
+            f"not a valid Postgres URL: {redact(url)} ({exc})",
+            hint="Write it as postgresql://user:password@host:5432/dbname",
+        ) from None
     if parts.scheme not in SCHEMES:
         shown = parts.scheme or "none"
         raise ConfigError(
-            f"unsupported URL scheme '{shown}' in {redact(url)}: use postgres:// or postgresql://"
+            f"unsupported URL scheme '{shown}' in {redact(url)}",
+            hint="Write it as postgresql://user:password@host:5432/dbname",
         )
     dbname = unquote(parts.path.lstrip("/"))
     if not dbname:
         raise ConfigError(
-            f"{redact(url)} has no database name "
-            "(expected postgres://user:password@host:5432/dbname)"
+            f"{redact(url)} has no database name",
+            hint="Write it as postgresql://user:password@host:5432/dbname",
         )
     sslmode = parse_qs(parts.query).get("sslmode", [None])[-1]
     return PgTarget(

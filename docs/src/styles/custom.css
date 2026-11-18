@@ -1,0 +1,184 @@
+/*
+ * Iotabyt brand for Starlight: one navy that does the work, one red that's the spark.
+ *
+ *   navy        #00091E   text, and the dark-mode background
+ *   raised      #F5F6F8 light / #0B1530 dark
+ *   hairline    #E3E5EA light / #1C2742 dark
+ *   accent      #C40000 light / #FF5C5C dark   links and buttons only
+ *   pure red    #FF0000   the logo only (big shapes), never small text
+ *
+ * No gradients, no glow. Outside links, red appears once per page at most (the logo), so
+ * the current sidebar item is marked in navy, not as a red block.
+ */
+
+:root {
+  /* Dark mode is Starlight's default. */
+  --sl-color-white: #ffffff;
+  --sl-color-gray-1: #e8ebf2;
+  --sl-color-gray-2: #c9cfdb;
+  --sl-color-gray-3: #98a1b5;
+  --sl-color-gray-4: #64708a;
+  --sl-color-gray-5: #2a3552;
+  --sl-color-gray-6: #1c2742;
+  --sl-color-black: #00091e;
+
+  --sl-color-accent-low: #3d0b12;
+  --sl-color-accent: #ff5c5c;
+  --sl-color-accent-high: #ff5c5c;
+
+  --sl-color-text: var(--sl-color-gray-2);
+  --sl-color-text-accent: var(--sl-color-accent);
+  --sl-color-text-invert: #00091e;
+  --sl-color-bg: #00091e;
+  --sl-color-bg-nav: #00091e;
+  --sl-color-bg-sidebar: #00091e;
+  --sl-color-bg-inline-code: #0b1530;
+  --sl-color-bg-accent: var(--sl-color-accent);
+  --sl-color-hairline-light: #1c2742;
+  --sl-color-hairline: #1c2742;
+  --sl-color-hairline-shade: #00091e;
+  --sl-color-backdrop-overlay: rgb(0 9 30 / 0.7);
+
+  --pgb-raised: #0b1530;
+  --pgb-current-bg: #0b1530;
+  --pgb-current-fg: #ffffff;
+
+  --sl-font: "Outfit Variable";
+  --sl-font-mono: "JetBrains Mono";
+}
+
+:root[data-theme="light"] {
+  --sl-color-white: #00091e;
+  --sl-color-gray-1: #0b1530;
+  --sl-color-gray-2: #232d45;
+  --sl-color-gray-3: #475168;
+  --sl-color-gray-4: #6b7489;
+  --sl-color-gray-5: #c4c9d3;
+  --sl-color-gray-6: #e3e5ea;
+  --sl-color-gray-7: #f5f6f8;
+  --sl-color-black: #ffffff;
+
+  --sl-color-accent-low: #fbe7e7;
+  --sl-color-accent: #c40000;
+  --sl-color-accent-high: #8f0000;
+
+  --sl-color-text: #00091e;
+  --sl-color-text-accent: var(--sl-color-accent);
+  --sl-color-text-invert: #ffffff;
+  --sl-color-bg: #ffffff;
+  --sl-color-bg-nav: #ffffff;
+  --sl-color-bg-sidebar: #ffffff;
+  --sl-color-bg-inline-code: #f5f6f8;
+  --sl-color-bg-accent: var(--sl-color-accent);
+  --sl-color-hairline-light: #e3e5ea;
+  --sl-color-hairline: #e3e5ea;
+  --sl-color-hairline-shade: #e3e5ea;
+  --sl-color-backdrop-overlay: rgb(0 9 30 / 0.45);
+
+  --pgb-raised: #f5f6f8;
+  --pgb-current-bg: #f5f6f8;
+  --pgb-current-fg: #00091e;
+}
+
+/* The site title is navy (white in dark mode), not accent red. The mark is 24px. */
+.site-title {
+  color: var(--sl-color-white);
+  gap: 0.5rem;
+  font-weight: 600;
+}
+.site-title img {
+  height: 1.5rem;
+  width: 1.5rem;
+}
+
+/* Current page in the sidebar: navy on the raised surface, with a navy bar. Not a red block. */
+.sidebar-content a[aria-current="page"],
+.sidebar-content a[aria-current="page"]:hover,
+.sidebar-content a[aria-current="page"]:focus {
+  color: var(--pgb-current-fg);
+  background-color: var(--pgb-current-bg);
+  box-shadow: inset 3px 0 0 var(--sl-color-white);
+  font-weight: 600;
+}
+
+/* Headings in navy (white in dark mode). */
+.sl-markdown-content :is(h1, h2, h3, h4, h5, h6),
+h1#_top {
+  color: var(--sl-color-white);
+  letter-spacing: -0.01em;
+}
+
+/* Links: accent, underlined, so they never rely on colour alone. */
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--sl-color-text-accent);
+  text-underline-offset: 0.18em;
+}
+
+/* Footer brand line. */
+.pgb-brand {
+  margin: 1.5rem 0 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--sl-color-hairline);
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-gray-3);
+}
+.pgb-brand a {
+  color: var(--sl-color-white);
+}
+
+/* Not links in the reading sense, so not red: the social icons and the active tab marker. */
+.social-icons a,
+header a[rel="me"] {
+  color: var(--sl-color-white);
+}
+.tab [role="tab"][aria-selected="true"] {
+  --sl-tab-color-border: var(--sl-color-white);
+}
+
+/* The title beside the header mark is set in JetBrains Mono, like the lockup. */
+.site-title span {
+  font-family: var(--__sl-font-mono);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+/* Homepage hero: the mark at 96px above the title, one column, not a big illustration. */
+.hero {
+  grid-template-columns: 100% !important;
+  padding-block: 2rem 1rem !important;
+}
+.hero > img {
+  order: 0 !important;
+  width: 6rem !important;
+  height: 6rem;
+  margin-inline: auto;
+}
+@media (min-width: 50rem) {
+  .hero > img {
+    margin-inline: 0;
+  }
+}
+
+/* Footer: the Iotabyt mark at 16px before "Iotabyt". */
+/* No display here: Starlight's light:/dark:sl-hidden utilities pick which mark shows. */
+.pgb-brand img {
+  width: 1rem;
+  height: 1rem;
+  vertical-align: -0.15em;
+  margin-inline-end: 0.3em;
+}
+.pgb-brand a {
+  text-decoration: none;
+}
+.pgb-brand a strong {
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+/* Links inside asides sit on a tinted background (blue note, amber caution), where the brand
+   red drops below 4.5:1. There they take the aside's text colour, underlined, so they still
+   read as links. */
+.starlight-aside a:not(:where(.not-content *)) {
+  color: inherit;
+  text-decoration-thickness: 1px;
+}

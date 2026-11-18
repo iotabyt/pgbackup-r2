@@ -1,0 +1,65 @@
+# Nightly backups from GitHub Actions, for managed databases (Neon, Supabase, Crunchy
+# Bridge, RDS, ...) where you have no server of your own to run the backup container on.
+# Copy to .github/workflows/ in a PRIVATE repo.
+#
+# The database must accept connections from outside: GitHub's runners connect from changing
+# addresses all over Azure, so an IP allowlist won't work unless it allows them all.
+#   Neon       use the direct host, without "-pooler".
+#   Supabase   the direct host (db.<ref>.supabase.co) is IPv6-only, and GitHub's runners have
+#              no IPv6. Use the Session pooler string (port 5432), not the Transaction
+#              pooler (port 6543), which pg_dump can't use.
+#
+# Secrets to add (Settings > Secrets and variables > Actions):
+#   DATABASE_URL          postgresql://user:password@host:5432/dbname?sslmode=require
+#   AGE_RECIPIENTS        the PUBLIC key (age1...). Only the public key: this workflow can
+#                         write backups but never read them. The private key stays offline.
+#   R2_ENDPOINT           https://<account-id>.r2.cloudflarestorage.com
+#   R2_BUCKET             the bucket name
+#   R2_ACCESS_KEY_ID      an R2 token with Object Read & Write on the bucket
+#   R2_SECRET_ACCESS_KEY
+#   HEARTBEAT_URL         optional, recommended: GitHub disables scheduled workflows in repos
+#   HEARTBEAT_FAIL_URL    with no activity for 60 days, and a heartbeat notices the silence.
+#
+# Set the image tag to your server's Postgres major version (pg16, pg17 or pg18).
+
+name: nightly backup
+
+on:
+  schedule:
+    - cron: "17 2 * * *" # 02:17 UTC. GitHub may start scheduled runs some minutes late.
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  backup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        prefix: [myapp] # one entry per app (its S3_PREFIX). Use a DATABASE_URL per app if
+        #                 they live in different databases.
+    steps:
+      - name: Back up ${{ matrix.prefix }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          AGE_RECIPIENTS: ${{ secrets.AGE_RECIPIENTS }}
+          S3_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          S3_BUCKET: ${{ secrets.R2_BUCKET }}
+          S3_PREFIX: ${{ matrix.prefix }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          HEARTBEAT_URL: ${{ secrets.HEARTBEAT_URL }}
+          HEARTBEAT_FAIL_URL: ${{ secrets.HEARTBEAT_FAIL_URL }}
+          RETENTION_DAYS: "30"
+          MIN_KEEP: "7"
+        # `-e NAME` with no value passes the variable through, so secrets never appear on the
+        # command line. backup also prunes past RETENTION_DAYS, keeping the newest MIN_KEEP.
+        run: |
+          docker run --rm \
+            -e DATABASE_URL -e AGE_RECIPIENTS \
+            -e S3_ENDPOINT -e S3_BUCKET -e S3_PREFIX \
+            -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
+            -e HEARTBEAT_URL -e HEARTBEAT_FAIL_URL -e RETENTION_DAYS -e MIN_KEEP \
+            ghcr.io/iotabyt/pgbackup-r2:pg17 backup

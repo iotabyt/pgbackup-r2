@@ -1,0 +1,130 @@
+---
+title: Quick start
+description: Install pgb, set up one folder, take a backup and prove it restores.
+next:
+  link: /guides/r2/
+  label: Set up R2
+---
+
+import { Steps, Tabs, TabItem, Aside } from "@astrojs/starlight/components";
+
+You need Docker, and nothing else. `pgb` is a small script around `docker run`. It keeps your settings in a `.env` file in one folder, and every `pgb` command uses the `.env` of the folder you run it in.
+
+<Steps>
+
+1. **Install `pgb`.**
+
+   <Tabs syncKey="shell">
+   <TabItem label="bash, zsh, fish">
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/install.sh | sh
+   ```
+
+   If `~/.local/bin` isn't on your `PATH`, the installer prints the line to add for your shell. See [Install pgb](/start/install/) for details.
+
+   </TabItem>
+   <TabItem label="PowerShell">
+
+   ```powershell
+   $d = Join-Path $HOME .pgb; New-Item -ItemType Directory -Force $d, (Split-Path $PROFILE) | Out-Null; irm https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/pgb.ps1 -OutFile (Join-Path $d pgb.ps1); if ("$(Get-Content -Raw $PROFILE -ErrorAction Ignore)" -notmatch 'function pgb ') { Add-Content $PROFILE "function pgb { & '$(Join-Path $d pgb.ps1)' @args }" }; . $PROFILE
+   ```
+
+   </TabItem>
+   </Tabs>
+
+2. **Make a folder for one database, with a `.env`.**
+
+   ```bash
+   mkdir acme-backups
+   cd acme-backups
+   pgb init
+   ```
+
+   `pgb init` writes a commented `.env` and an empty `out/` folder. On Linux and macOS, `.env` is readable only by you. It never overwrites an existing `.env`.
+
+3. **Make a key pair.**
+
+   ```bash
+   pgb keygen
+   ```
+
+   This prints a public key and a private key. Nothing is written to disk. **Save the private key in your password manager now.** If you lose it, nobody can open your backups, including you. Put the public key in `.env` as `AGE_RECIPIENTS=age1…`. On your laptop, also uncomment `AGE_IDENTITY=` and paste the private key there, for `verify` and `drill`. See [Keys and security](/concepts/keys/).
+
+4. **Fill in the rest of `.env`.** Only the 7 lines at the top are needed. Everything under "Optional" has a sensible default.
+
+   ```bash
+   PG_MAJOR=17                                    # your server's major version
+   DATABASE_URL=postgresql://user:password@host:5432/acme
+   S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+   S3_BUCKET=acme-db-backups
+   AWS_ACCESS_KEY_ID=...
+   AWS_SECRET_ACCESS_KEY=...
+   AGE_RECIPIENTS=age1...
+   ```
+
+   - **Bucket and token:** [Set up R2](/guides/r2/) walks through creating them. Any [other S3-compatible storage](/guides/other-storage/) works too.
+   - **`PG_MAJOR`** must match your server: run `SHOW server_version;`. See [Postgres versions](/concepts/postgres-versions/).
+   - **More than one app in a bucket?** Uncomment `S3_PREFIX` and give each app its own, like `S3_PREFIX=acme`.
+   - **`DATABASE_URL`** must be a direct, non-pooled connection.
+     - A database on this machine can use `localhost`, which `pgb` handles.
+     - A database in Docker Compose needs `PGB_NETWORK`, as in [App on a VPS](/guides/vps/).
+
+5. **Check the setup.**
+
+   ```bash
+   pgb doctor
+   ```
+
+   ```text
+   ✓ Docker is running
+   ✓ .env found in /home/ama/acme-backups
+   ✓ Settings: everything a backup needs is set (storage: https://<account-id>.r2.cloudflarestorage.com)
+   ✓ Database: connected to postgresql://***@db:5432/acme, PostgreSQL 17.2
+   ✓ Bucket: s3://acme-db-backups/acme/ is writable (wrote and deleted a test file)
+   ✓ Keys: AGE_IDENTITY opens what is encrypted to AGE_RECIPIENTS
+   ⚠ This bucket has never been drilled.
+       Run `pgb drill`.
+
+   All checks passed.
+   ```
+
+   A ⚠ is worth a look but isn't a failure. This one goes away after step 6.
+
+   Every ✗ comes with a fix underneath. [Troubleshooting](/troubleshooting/) explains each message.
+
+6. **Back up, then prove it works.**
+
+   ```bash
+   pgb backup
+   pgb verify
+   pgb drill
+   ```
+
+   - **`backup`** counts every table's rows, then dumps, encrypts and uploads.
+   - **`verify`** downloads the latest backup, checks it and decrypts it. It takes a few seconds and needs no database.
+   - **`drill`** restores the backup into a throwaway Postgres and compares every table's row count with the manifest. It removes the database afterwards, whatever happens.
+
+   ```text
+   PASS  acme/2026-11-18T020000Z.dump.age  (48.2 MB, restored in 21.4s)
+     37 tables and 1,284,903 rows match the manifest
+   ```
+
+7. **Back up every night.** On a machine that's always on and can reach the database:
+
+   ```bash
+   pgb nightly start      # backs up at BACKUP_AT, default 02:00 UTC
+   pgb nightly status
+   ```
+
+   On a server, leave `AGE_IDENTITY` out of `.env`, and run `verify` and `drill` from your laptop instead. For a managed database with no server of your own, see [Managed databases](/guides/managed-databases/).
+
+</Steps>
+
+<Aside>
+Every `pgb` command is a `docker run` underneath. [pgb commands](/reference/pgb/) shows each one with plain Docker.
+</Aside>
+
+## Next
+
+**[Set up R2](/guides/r2/)**: create the bucket and the token, step by step.
