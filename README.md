@@ -38,6 +38,15 @@ The [Quick start](https://pgbackup-r2.iotabyt.com/start/quick-start/) explains e
 - [Restoring on a bad day](https://pgbackup-r2.iotabyt.com/guides/restoring/)
 - [Reference](https://pgbackup-r2.iotabyt.com/reference/pgb/) and [Troubleshooting](https://pgbackup-r2.iotabyt.com/troubleshooting/)
 
+## Uninstall
+
+```bash
+pgb uninstall          # pgb itself
+pgb uninstall --all    # also the pgb nightly containers and the pgbackup-r2 images
+```
+
+It shows what it will remove and asks first. Your backups, `.env` files and keys are never touched. If you've already deleted the script, see [Uninstalling](https://pgbackup-r2.iotabyt.com/start/install/#uninstalling) for the manual steps.
+
 ## Development
 
 Contributions are welcome: see [`CONTRIBUTING.md`](CONTRIBUTING.md). In short:

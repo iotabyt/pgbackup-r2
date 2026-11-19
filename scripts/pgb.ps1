@@ -6,7 +6,7 @@
 # PG_MAJOR (from .env, default 16) picks the image, and PGB_NETWORK joins a Docker network.
 # For developers: $env:PGB_IMAGE runs a different image, such as a local build (CONTRIBUTING.md).
 
-$PgbVersion = '0.2.0'
+$PgbVersion = '0.3.0'
 $Repo = 'ghcr.io/iotabyt/pgbackup-r2'
 $ErrorActionPreference = 'Stop'
 
@@ -109,6 +109,7 @@ pgb ${PgbVersion}: pgbackup-r2 through Docker, using ./.env (image $image)
                               back up every day at BACKUP_AT, in a background container
   pgb update                  pull the latest image for PG_MAJOR
   pgb version                 pgb's and the image's versions
+  pgb uninstall [--all]       remove pgb (--all: also the nightly containers and images)
 
 pgb help <command> shows what a command does, with examples.
 Docs: https://pgbackup-r2.iotabyt.com
@@ -169,6 +170,19 @@ Usage: pgb version
 
 Examples:
   pgb version
+'@
+    'uninstall' = @'
+Remove pgb from this computer. Backups, .env files and keys are never touched.
+
+Usage: pgb uninstall [--all] [--yes]
+
+Removes pgb itself (in PowerShell, also its function in $PROFILE). With --all, it also
+removes the pgb nightly containers and the ghcr.io/iotabyt/pgbackup-r2 images. It lists
+what it will remove and asks first; --yes skips the question.
+
+Examples:
+  pgb uninstall                     # just pgb itself
+  pgb uninstall --all               # also the nightly containers and the images
 '@
     'help' = @'
 Show the commands, or what one command does, with examples.
@@ -436,6 +450,117 @@ function Invoke-Update {
     }
 }
 
+# Containers and images built from our Dockerfile carry this label. pgb uninstall --all
+# only ever touches what has it, so nobody else's containers are at risk.
+$OurLabel = 'org.opencontainers.image.source=https://github.com/iotabyt/pgbackup-r2'
+$ProfileBegin = '# >>> pgb: added by the pgbackup-r2 installer >>>'
+$ProfileEnd = '# <<< pgb <<<'
+
+# The installer's block in $PROFILE (between the markers), or the single line older installs
+# added. Nothing else in $PROFILE ever matches.
+function PgbProfileRegex {
+    '(?ms)^' + [regex]::Escape($ProfileBegin) + '\r?\n.*?^' + [regex]::Escape($ProfileEnd) + '[^\S\r\n]*(\r?\n)?' +
+    "|(?m)^function pgb \{ & '[^']*[\\/]\.pgb[\\/]pgb\.ps1' @args \}[^\S\r\n]*(\r?\n)?"
+}
+
+# Removes pgb itself, and with --all the nightly containers and our images. Never touches
+# .env files, out folders, anything in the bucket, or keys.
+function Invoke-Uninstall([string[]]$rest) {
+    $all = $false; $yes = $false
+    foreach ($a in $rest) {
+        switch ($a) {
+            '--all' { $all = $true }
+            { $_ -in '--yes', '-y' } { $yes = $true }
+            default { Fail "pgb uninstall: unknown option $a. See pgb help uninstall." }
+        }
+    }
+
+    $targets = @()  # what will go, as shown to the user
+    $pgbDir = Join-Path $HOME '.pgb'
+    if (Test-Path $pgbDir) { $targets += "$pgbDir (the pgb script)" }
+    # The running copy too, if it's elsewhere. Never a source checkout's scripts\pgb.ps1,
+    # which sits next to install.ps1.
+    $self = $PSCommandPath
+    $selfDir = Split-Path $self
+    $removeSelf = (Test-Path $self) -and -not $self.StartsWith($pgbDir) -and -not (Test-Path (Join-Path $selfDir 'install.ps1'))
+    if ($removeSelf) { $targets += "$self (the pgb script)" }
+    $profileText = if (Test-Path $PROFILE -PathType Leaf) { [IO.File]::ReadAllText($PROFILE) } else { '' }
+    $hasBlock = $profileText -match (PgbProfileRegex)
+    if ($hasBlock) { $targets += "the pgb function in $PROFILE (only the lines the installer added)" }
+
+    $containers = @(); $running = @(); $images = @()
+    Quiet { docker info } | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        foreach ($line in @(Quiet { docker ps -a --filter "label=$OurLabel" --filter name=pgbackup --format '{{.Names}} {{.State}}' })) {
+            if (-not $line) { continue }
+            $name, $state = $line -split ' ', 2
+            # pgb nightly's names: pgbackup-<S3_PREFIX>, or just pgbackup.
+            if ($name -ceq 'pgbackup' -or $name.StartsWith('pgbackup-')) {
+                $containers += $name
+                if ($state -eq 'running') { $running += $name }
+            }
+        }
+        foreach ($item in @(Quiet { docker images --filter "label=$OurLabel" --filter "reference=${Repo}:*" --format '{{.Repository}}:{{.Tag}}' })) {
+            if ($item -and $item -notmatch '<none>') { $images += $item }
+        }
+    }
+
+    if ($targets.Count -eq 0 -and (-not $all -or ($containers.Count + $images.Count) -eq 0)) {
+        'pgb is not installed: nothing to remove.'
+        exit 0
+    }
+
+    'pgb uninstall will remove:'
+    foreach ($t in $targets) { "  - $t" }
+    if ($all) {
+        foreach ($c in $containers) {
+            if ($running -contains $c) { "  - container $c (running: its scheduled backups stop)" } else { "  - container $c" }
+        }
+        foreach ($i in $images) { "  - image $i" }
+    } elseif ($running.Count -gt 0) {
+        ''
+        "Note: $($running -join ' ') is running, and uninstalling pgb leaves it running: it keeps"
+        '  taking backups. To stop them, run `pgb nightly stop` in its folder first, or use'
+        '  pgb uninstall --all.'
+    }
+    ''
+
+    if (-not $yes) {
+        if ([Console]::IsInputRedirected) {
+            Fail "not a terminal, so nothing was removed. To confirm, run: pgb uninstall$(if ($all) { ' --all' }) --yes"
+        }
+        $answer = Read-Host 'Remove these? [y/N]'
+        if ($answer -notmatch '^[yY]') { 'Nothing removed.'; exit 0 }
+    }
+
+    if ($all) {
+        foreach ($c in $containers) { Quiet { docker rm -f $c } | Out-Null; if ($LASTEXITCODE -eq 0) { "Removed container $c" } }
+        foreach ($i in $images) { Quiet { docker rmi $i } | Out-Null; if ($LASTEXITCODE -eq 0) { "Removed image $i" } }
+    }
+    if ($hasBlock) {
+        # Keep the file's encoding: write a BOM back only if it had one.
+        $bytes = [IO.File]::ReadAllBytes($PROFILE)
+        $bom = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
+        $kept = [regex]::Replace($profileText, (PgbProfileRegex), '')
+        [IO.File]::WriteAllText($PROFILE, $kept, (New-Object Text.UTF8Encoding($bom)))
+        "Removed the pgb function from $PROFILE"
+    }
+    if ($removeSelf) { Remove-Item -Force $self; "Removed $self" }
+    if (Test-Path $pgbDir) { Remove-Item -Recurse -Force $pgbDir; "Removed $pgbDir" }
+
+    ''
+    'Left in place, on purpose:'
+    '  - Your backups in the bucket, with their manifests and .drills/ records, were not touched.'
+    '  - Your .env files and out/ folders were not touched.'
+    '  - Your private key is still wherever you saved it. You need it to open old backups.'
+    if (-not $all -and $images.Count -gt 0) { "  - The pgbackup-r2 Docker images. To remove them: docker image rm $($images -join ' ')" }
+    if (-not $all -and $running.Count -gt 0) { "  - $($running -join ' '), still running and taking backups. To stop it: docker rm -f $($running -join ' ')" }
+    '  - This window still knows the pgb function until you open a new one.'
+    ''
+    'To install pgb again: irm https://pgbackup-r2.iotabyt.com/install.ps1 | iex'
+    exit 0
+}
+
 function Show-Version {
     $v = ImageVersion
     "pgb $PgbVersion"
@@ -451,7 +576,7 @@ $savedEnv = @{
 }
 # --help on pgb's own commands shows help, rather than doing the thing.
 if (($rest -contains '-h' -or $rest -contains '--help') -and
-    $cmd -in 'init', 'drill', 'nightly', 'update', 'version') {
+    $cmd -in 'init', 'drill', 'nightly', 'update', 'version', 'uninstall') {
     $OwnHelp[$cmd]
     exit 0
 }
@@ -463,6 +588,7 @@ try {
         'drill' { Invoke-Drill $rest }
         'nightly' { Invoke-Nightly $rest }
         'update' { Invoke-Update; exit 0 }
+        'uninstall' { Invoke-Uninstall $rest }
         { $_ -in 'version', '--version' } { Show-Version; exit 0 }
         default {
             if ($cmd -ne 'keygen') { Add-DbNetwork }

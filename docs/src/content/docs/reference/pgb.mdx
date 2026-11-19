@@ -124,6 +124,12 @@ docker pull ghcr.io/iotabyt/pgbackup-r2:pg16
 
 `pgb`'s own version, and the version inside the image. If the image isn't pulled yet, it says so.
 
+### `pgb uninstall [--all] [--yes]`
+
+Removes `pgb` from this computer. In PowerShell, that includes `~\.pgb` and the installer's lines in `$PROFILE`. With `--all`, it also removes the `pgb nightly` containers and the `ghcr.io/iotabyt/pgbackup-r2` images, only those carrying pgbackup-r2's image label.
+
+It lists what it will remove and asks first. `--yes` skips the question, and without a terminal it refuses unless you pass `--yes`. It never touches backups, `.env` files, `out/` folders or keys. See [Uninstalling](/start/install/#uninstalling).
+
 ### `pgb help [COMMAND]`
 
 With no command: a short list of commands. With one, such as `pgb help drill`: what that command does, its usage and examples. pgb's own commands (`init`, `drill`, `nightly`, `update`, `version`) have their own help. For the rest, `pgb` shows the image's. `--help` or `-h` after any command shows the same, and on pgb's own commands it does nothing else: `pgb drill --help` doesn't start a database.

@@ -7,12 +7,17 @@ scratch database and network are always removed.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import signal
 import subprocess
+import sys
+import threading
 import time
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -326,6 +331,9 @@ cd "$(mktemp -d)"
 bash /s/pgb help | head -n 1
 bash /s/pgb help drill | head -n 1
 bash /s/pgb drill --help | head -n 1
+mkdir -p "$HOME/.local/bin" && cp /s/pgb "$HOME/.local/bin/pgb"
+bash "$HOME/.local/bin/pgb" uninstall --yes | grep "^Removed"
+bash /s/pgb uninstall --yes
 bash /s/pgb version
 PATH=/fake:$PATH bash /s/pgb keygen
 bash /s/pgb init > /dev/null
@@ -343,6 +351,8 @@ PATH=/fake:$PATH bash /s/pgb decrypt latest --out /out/x
     version = f"-e PGB_VERSION={__version__}"
     assert f"docker run --rm {version} --user 0:0 ghcr.io/iotabyt/pgbackup-r2:pg16 keygen" in lines
     assert lines.count("Restore a backup into a throwaway database and check every table.") == 2
+    assert any(re.fullmatch(r"Removed /\S+/\.local/bin/pgb", x) for x in lines)
+    assert "pgb is not installed: nothing to remove." in lines
     assert any(
         re.search(r"--env-file \.env -e PGB_VERSION=\S+ -v /tmp/[^ ]+/out:/out .* decrypt", x)
         for x in lines
@@ -590,7 +600,7 @@ def test_init_detect_without_env_writes_the_template_first(shell, tmp_path):
 
 # --- help ----------------------------------------------------------------------------------
 
-OWN = ["init", "drill", "nightly", "update", "version", "help"]
+OWN = ["init", "drill", "nightly", "update", "version", "uninstall", "help"]
 
 
 @pytest.mark.parametrize("shell", SHELLS)
@@ -650,3 +660,232 @@ def test_doctor_gets_the_env_key_names_only(shell, tmp_path):
     [keys] = run_keys(calls)
     assert [k for k in keys.split(",") if k] == ["S3_BUKET", "DATABASE_URL"]
     assert "secret" not in keys
+
+
+# --- uninstall -----------------------------------------------------------------------------
+
+OUR_LABEL = "org.opencontainers.image.source=https://github.com/iotabyt/pgbackup-r2"
+
+# A docker that keeps a small inventory in a JSON file and applies --filter like the real one.
+INVENTORY_DOCKER = f"""#!{sys.executable}
+import fnmatch, json, os, sys
+path = os.environ["FAKE_DOCKER_INV"]
+inv = json.load(open(path))
+args = sys.argv[1:]
+with open(os.environ["FAKE_DOCKER_LOG"], "a") as log:
+    log.write(json.dumps(args) + "\\n")
+filters = [args[i + 1] for i, a in enumerate(args) if a == "--filter"]
+def keep(item, ref_key):
+    for f in filters:
+        key, value = f.split("=", 1)
+        if key == "label" and value not in item["labels"]:
+            return False
+        if key == "name" and value not in item["name"]:
+            return False
+        if key == "reference" and not fnmatch.fnmatch(item["ref"], value):
+            return False
+    return True
+if args[:1] == ["info"]:
+    sys.exit(0)
+if args[:1] == ["ps"]:
+    for c in inv["containers"]:
+        if keep(c, None):
+            print(c["name"], c["state"])
+elif args[:1] == ["images"]:
+    for i in inv["images"]:
+        if keep(i, "ref"):
+            print(i["ref"])
+elif args[:2] == ["rm", "-f"]:
+    inv["containers"] = [c for c in inv["containers"] if c["name"] not in args[2:]]
+elif args[:1] == ["rmi"]:
+    inv["images"] = [i for i in inv["images"] if i["ref"] not in args[1:]]
+json.dump(inv, open(path, "w"))
+"""
+
+INVENTORY = {
+    "containers": [
+        {"name": "pgbackup-shop", "state": "running", "labels": [OUR_LABEL]},
+        {"name": "pgbackup-old", "state": "exited", "labels": [OUR_LABEL]},
+        {"name": "pgbackup-copycat", "state": "running", "labels": []},  # not ours: no label
+        {"name": "shop-db", "state": "running", "labels": ["com.docker.compose.project=shop"]},
+    ],
+    "images": [
+        {"ref": "ghcr.io/iotabyt/pgbackup-r2:pg16", "labels": [OUR_LABEL]},
+        {"ref": "ghcr.io/iotabyt/pgbackup-r2:pg18", "labels": [OUR_LABEL]},
+        {"ref": "pgbackup-r2:pg16", "labels": [OUR_LABEL]},  # a local build: not ghcr
+        {"ref": "ghcr.io/someone/pgbackup-r2:pg16", "labels": []},
+        {"ref": "postgres:16", "labels": []},
+    ],
+}
+
+
+@pytest.fixture(scope="module")
+def script_server():
+    """Serves scripts/ over HTTP, standing in for GitHub, for the installers."""
+    handler = partial(SimpleHTTPRequestHandler, directory=str(SCRIPTS))
+    handler.log_message = lambda *a, **k: None  # type: ignore[method-assign]
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+
+
+class Machine:
+    """A throwaway HOME with an inventory docker on PATH, and a backup folder to protect."""
+
+    def __init__(self, tmp_path: Path, inventory: dict | None = None):
+        self.home = tmp_path / "home"
+        self.folder = tmp_path / "backups"  # a pgb folder: .env, out/, a dump
+        bin_dir = tmp_path / "bin"
+        for d in (self.home, self.folder / "out", bin_dir):
+            d.mkdir(parents=True)
+        (self.folder / ".env").write_text("S3_BUCKET=b\nAGE_IDENTITY=AGE-SECRET-KEY-1XYZ\n")
+        (self.folder / "out" / "backup.dump").write_bytes(b"PGDMP")
+        self.profile = self.home / ".config" / "powershell" / "Microsoft.PowerShell_profile.ps1"
+        self.profile.parent.mkdir(parents=True)
+        self.profile.write_text("Set-Alias ll Get-ChildItem\n# my own settings\n")
+        docker = bin_dir / "docker"
+        docker.write_text(INVENTORY_DOCKER)
+        docker.chmod(0o755)
+        self.inv = tmp_path / "inventory.json"
+        self.inv.write_text(
+            json.dumps(inventory if inventory is not None else {"containers": [], "images": []})
+        )
+        self.env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("XDG_CONFIG_HOME", "PG_MAJOR", "PGB_IMAGE", "PGB_NETWORK", "PGB_VERSION")
+        }
+        self.env.update(
+            HOME=str(self.home),
+            PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            FAKE_DOCKER_INV=str(self.inv),
+            FAKE_DOCKER_LOG=str(tmp_path / "docker.log"),
+        )
+
+    def run(self, *cmd: str, **env: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            list(cmd),
+            cwd=self.folder,
+            env={**self.env, **env},
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+    def inventory(self) -> dict:
+        return json.loads(self.inv.read_text())
+
+    def untouched(self) -> bool:
+        return (
+            self.folder / ".env"
+        ).read_text() == "S3_BUCKET=b\nAGE_IDENTITY=AGE-SECRET-KEY-1XYZ\n" and (
+            self.folder / "out" / "backup.dump"
+        ).read_bytes() == b"PGDMP"
+
+
+def install(m: Machine, shell: str, server: str) -> list[str]:
+    """Install pgb the way users do, from the local server; returns the command to run it."""
+    if shell == "bash":
+        r = m.run("sh", str(INSTALL), PGB_VERSION="v0.0.0", PGB_URL=f"{server}/pgb")
+        assert r.returncode == 0, r.stderr
+        return ["bash", str(m.home / ".local" / "bin" / "pgb")]
+    r = m.run("pwsh", "-NoProfile", "-c", f"irm {server}/install.ps1 | iex",
+              PGB_VERSION="v0.0.0", PGB_URL=f"{server}/pgb.ps1")  # fmt: skip
+    assert r.returncode == 0, r.stderr
+    return ["pwsh", "-NoProfile", "-NonInteractive", "-File", str(m.home / ".pgb" / "pgb.ps1")]
+
+
+SHELL_NAMES = [
+    pytest.param("bash", id="bash"),
+    pytest.param(
+        "pwsh",
+        id="pwsh",
+        marks=pytest.mark.skipif(shutil.which("pwsh") is None, reason="needs pwsh"),
+    ),
+]
+
+
+@pytest.mark.parametrize("shell", SHELL_NAMES)
+def test_install_then_uninstall_leaves_no_pgb_files(shell, tmp_path, script_server):
+    m = Machine(tmp_path)
+    pgb = install(m, shell, script_server)
+    if shell == "pwsh":
+        assert "# >>> pgb: added by the pgbackup-r2 installer >>>" in m.profile.read_text()
+
+    r = m.run(*pgb, "uninstall", "--yes")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Your backups in the bucket" in r.stdout
+    assert "Your private key is still wherever you saved it." in r.stdout
+    assert not (m.home / ".local" / "bin" / "pgb").exists()
+    assert not (m.home / ".pgb").exists()
+    # $PROFILE keeps everything that isn't ours.
+    assert m.profile.read_text() == "Set-Alias ll Get-ChildItem\n# my own settings\n"
+    assert m.untouched()
+
+    # Twice is safe: nothing left to remove (run from the source checkout).
+    again = m.run(*SHELLS[0 if shell == "bash" else 1].values[0], "uninstall", "--yes")
+    assert again.returncode == 0, again.stderr
+    assert "pgb is not installed: nothing to remove." in again.stdout
+
+
+@pytest.mark.parametrize("shell", SHELL_NAMES)
+def test_uninstall_without_a_terminal_or_yes_refuses(shell, tmp_path, script_server):
+    m = Machine(tmp_path)
+    pgb = install(m, shell, script_server)
+    r = m.run(*pgb, "uninstall")
+    assert r.returncode == 1
+    assert "not a terminal, so nothing was removed" in r.stderr
+    assert "pgb uninstall --yes" in r.stderr
+    assert Path(pgb[-1]).exists()
+    assert m.untouched()
+
+
+@pytest.mark.parametrize("shell", SHELL_NAMES)
+def test_uninstall_all_removes_only_our_containers_and_images(shell, tmp_path):
+    m = Machine(tmp_path, INVENTORY)
+    script = SHELLS[0 if shell == "bash" else 1].values[0]  # the source checkout: never deleted
+    r = m.run(*script, "uninstall", "--all", "--yes")
+    assert r.returncode == 0, r.stdout + r.stderr
+    left = m.inventory()
+    assert [c["name"] for c in left["containers"]] == ["pgbackup-copycat", "shop-db"]
+    assert [i["ref"] for i in left["images"]] == [
+        "pgbackup-r2:pg16",
+        "ghcr.io/someone/pgbackup-r2:pg16",
+        "postgres:16",
+    ]
+    assert "container pgbackup-shop (running: its scheduled backups stop)" in r.stdout
+    assert (SCRIPTS / "pgb").exists() and (SCRIPTS / "pgb.ps1").exists()
+    assert m.untouched()
+
+
+@pytest.mark.parametrize("shell", SHELL_NAMES)
+def test_uninstall_without_all_warns_about_running_nightly(shell, tmp_path, script_server):
+    m = Machine(tmp_path, INVENTORY)
+    pgb = install(m, shell, script_server)
+    r = m.run(*pgb, "uninstall", "--yes")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "pgbackup-shop is running, and uninstalling pgb leaves it running" in r.stdout
+    assert "pgb nightly stop" in r.stdout
+    assert m.inventory() == INVENTORY  # no containers or images touched without --all
+    assert (
+        "docker image rm ghcr.io/iotabyt/pgbackup-r2:pg16 ghcr.io/iotabyt/pgbackup-r2:pg18"
+        in r.stdout
+    )
+
+
+@pytest.mark.parametrize("shell", SHELL_NAMES)
+def test_installer_fails_clearly_when_github_cant_be_reached(shell, tmp_path):
+    m = Machine(tmp_path)
+    dead = {"HTTPS_PROXY": "http://127.0.0.1:9", "https_proxy": "http://127.0.0.1:9"}
+    if shell == "bash":
+        r = m.run("sh", str(INSTALL), **dead)
+    else:
+        r = m.run("pwsh", "-NoProfile", "-c", (SCRIPTS / "install.ps1").read_text(), **dead)
+    assert r.returncode != 0
+    assert "couldn't find the latest pgb release: GitHub's API didn't answer" in r.stdout + r.stderr
+    assert "PGB_VERSION" in r.stdout + r.stderr
+    # Never a quiet fallback to main: nothing was installed.
+    assert not (m.home / ".local" / "bin" / "pgb").exists()
+    assert not (m.home / ".pgb").exists()

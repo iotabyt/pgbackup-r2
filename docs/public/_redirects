@@ -1,4 +1,4 @@
 # Short install URLs. 302, not 301: a 301 is cached for good by browsers and proxies, and
 # the target may change (a tagged release, say).
 /install.sh  https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/install.sh  302
-/install.ps1  https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/pgb.ps1  302
+/install.ps1  https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/install.ps1  302

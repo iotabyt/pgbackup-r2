@@ -20,7 +20,7 @@ Scripts, cron and CI can rely on these.
 
 | Code | Meaning |
 |---|---|
-| `1` | `pgb` itself stopped before running anything. For example: no `.env` where one is needed, a bad `PG_MAJOR`, an unknown `pgb init` option, or `doctor` finding Docker not running. `pgb nightly status` also exits 1 when the container exists but isn't running. |
+| `1` | `pgb` itself stopped before running anything. For example: no `.env` where one is needed, a bad `PG_MAJOR`, an unknown `pgb init` option, `doctor` finding Docker not running, or `pgb uninstall` run without a terminal and without `--yes`. `pgb nightly status` also exits 1 when the container exists but isn't running. |
 | `3` | `pgb nightly status`: there's no nightly container. |
 | `130` | `pgb drill` was interrupted with Ctrl+C. The throwaway database and network are still removed. |
 | `143` | `pgb drill` was stopped with SIGTERM. The throwaway database and network are still removed. |

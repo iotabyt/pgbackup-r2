@@ -2,7 +2,23 @@
 
 ## Unreleased
 
-- Short install URL: `curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | sh`. In PowerShell, the install line downloads from `https://pgbackup-r2.iotabyt.com/install.ps1`. Both redirect (302) to the scripts on GitHub. The README and docs use them everywhere, and the Install page keeps the GitHub URLs for networks that block redirects.
+## 0.3.0 (2026-11-19)
+
+- Short install URL: `curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | sh`. It redirects (302) to the installer on GitHub. The README and docs use it everywhere, and the Install page keeps the GitHub URLs for networks that block redirects.
+- PowerShell has an installer script too: `irm https://pgbackup-r2.iotabyt.com/install.ps1 | iex`. It writes the `pgb` function into `$PROFILE` between marker comments, and running it again leaves `$PROFILE` alone.
+- The installers fetch `pgb` from the latest release (via GitHub's API, falling back to the highest `vX.Y.Z` tag), never from `main`. `PGB_VERSION=v0.2.0` installs a specific release. If the API can't be reached, the installer stops with a clear message instead of falling back to `main`.
+- `pgb uninstall` removes pgb, and in PowerShell its `~\.pgb` folder and only the installer's lines in `$PROFILE`.
+  - **`--all`:** also removes the `pgb nightly` containers and the `ghcr.io/iotabyt/pgbackup-r2` images, but only those carrying pgbackup-r2's image label.
+  - **Asks first:** it lists what it will remove before asking. `--yes` skips the question, and without a terminal and `--yes` it refuses.
+  - **Never touched:** backups, `.env` files, `out/` folders or keys.
+  - **Twice is safe:** a second run says `pgb is not installed`.
+
+### Upgrading from 0.2.x
+
+Re-run the install line to get `pgb uninstall`, then run `pgb update` in each backup folder.
+
+- **bash, zsh, fish:** `curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | sh`
+- **PowerShell:** `irm https://pgbackup-r2.iotabyt.com/install.ps1 | iex`. Your existing `function pgb` line in `$PROFILE` is kept, and `pgb uninstall` recognises it.
 
 ## 0.2.0 (2026-11-18)
 

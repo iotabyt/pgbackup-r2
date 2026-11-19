@@ -39,10 +39,10 @@ curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | sh
 <TabItem label="PowerShell">
 
 ```powershell
-$d = Join-Path $HOME .pgb; New-Item -ItemType Directory -Force $d, (Split-Path $PROFILE) | Out-Null; irm https://pgbackup-r2.iotabyt.com/install.ps1 -OutFile (Join-Path $d pgb.ps1); if ("$(Get-Content -Raw $PROFILE -ErrorAction Ignore)" -notmatch 'function pgb ') { Add-Content $PROFILE "function pgb { & '$(Join-Path $d pgb.ps1)' @args }" }; . $PROFILE
+irm https://pgbackup-r2.iotabyt.com/install.ps1 | iex
 ```
 
-This saves `pgb.ps1` in `~\.pgb` and adds a `pgb` function to your `$PROFILE`. Running it again updates the script without adding the function twice. It works in Windows PowerShell 5.1 and PowerShell 7, on any OS.
+This installs the latest release. It saves `pgb.ps1` in `~\.pgb`, and adds a `pgb` function to your `$PROFILE` between two marker comments, which is how `pgb uninstall` later finds it. Running it again updates `pgb.ps1` and leaves `$PROFILE` alone. It works in Windows PowerShell 5.1 and PowerShell 7, on any OS.
 
 If PowerShell refuses to run scripts:
 
@@ -53,13 +53,38 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 </TabItem>
 </Tabs>
 
-The bash, zsh and fish installer puts `pgb` in `~/.local/bin`. **`pgb` itself always runs with bash,** so it behaves the same whichever shell you type it in.
+The bash, zsh and fish installer puts the latest release of `pgb` in `~/.local/bin`. **`pgb` itself always runs with bash,** so it behaves the same whichever shell you type it in.
 
 Check it:
 
 ```bash
 pgb version
 ```
+
+## Install a specific version
+
+The install lines fetch `pgb` from the latest release on GitHub, never from the `main` branch, which can be mid-change. To install a particular release, name it with `PGB_VERSION`:
+
+<Tabs syncKey="shell">
+<TabItem label="bash, zsh, fish">
+
+```bash
+curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | PGB_VERSION=v0.2.0 sh
+```
+
+</TabItem>
+<TabItem label="PowerShell">
+
+```powershell
+$env:PGB_VERSION = 'v0.2.0'; irm https://pgbackup-r2.iotabyt.com/install.ps1 | iex
+```
+
+</TabItem>
+</Tabs>
+
+The releases are listed at [github.com/iotabyt/pgbackup-r2/tags](https://github.com/iotabyt/pgbackup-r2/tags).
+
+To find the latest release, the installer asks GitHub's API. It allows 60 requests an hour from one address. If the API can't be reached, the installer stops with a message rather than installing from `main`. Naming a version with `PGB_VERSION` skips the API altogether.
 
 ## Install without the short URL
 
@@ -76,7 +101,7 @@ curl -fsSL https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/in
 <TabItem label="PowerShell">
 
 ```powershell
-$d = Join-Path $HOME .pgb; New-Item -ItemType Directory -Force $d, (Split-Path $PROFILE) | Out-Null; irm https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/pgb.ps1 -OutFile (Join-Path $d pgb.ps1); if ("$(Get-Content -Raw $PROFILE -ErrorAction Ignore)" -notmatch 'function pgb ') { Add-Content $PROFILE "function pgb { & '$(Join-Path $d pgb.ps1)' @args }" }; . $PROFILE
+irm https://raw.githubusercontent.com/iotabyt/pgbackup-r2/main/scripts/install.ps1 | iex
 ```
 
 </TabItem>
@@ -123,34 +148,60 @@ macOS ships bash 3.2 from 2007, and `pgb` works with it. It avoids everything ne
 
 ## Update
 
-- **`pgb` itself:** run the install line again.
+- **`pgb` itself:** run the install line again. It installs the latest release.
 - **The image:** run `pgb update`. It pulls the image for your `PG_MAJOR`, prints the old and new versions, and tells you if `pgb nightly` needs a restart to use it.
 
-## Uninstall
+## Uninstalling
+
+```bash
+pgb uninstall          # pgb itself
+pgb uninstall --all    # also the pgb nightly containers and the pgbackup-r2 images
+```
+
+It lists exactly what it will remove and asks before removing anything. `--yes` skips the question. Run without a terminal and without `--yes`, it refuses.
+
+- **`pgb uninstall`** removes the `pgb` script. In PowerShell, it also removes `~\.pgb` and the `pgb` function from `$PROFILE`: only the lines between the installer's marker comments (or the single `function pgb` line that older installs added), never anything else in the file.
+- **`--all`** also stops and removes the `pgb nightly` containers, and removes the `ghcr.io/iotabyt/pgbackup-r2` images. It only touches containers and images carrying pgbackup-r2's own image label, so other containers are never at risk.
+- **Without `--all`, a running `pgb nightly` container keeps running,** and keeps taking backups. `pgb uninstall` warns you. Run `pgb nightly stop` in its folder first if you want the backups to stop.
+
+**Never touched, either way:**
+
+- your backups in the bucket, with their manifests and `.drills/` records
+- your `.env` files and `out/` folders
+- your keys
+
+Your private key is still wherever you saved it, and you need it to open your old backups.
+
+Running it twice is safe. The second time, it says `pgb is not installed` and stops.
+
+### If you already deleted the script
 
 <Tabs syncKey="shell">
 <TabItem label="bash, zsh, fish">
 
 ```bash
-pgb nightly stop                      # in each folder where you started it
-rm ~/.local/bin/pgb
-docker image rm ghcr.io/iotabyt/pgbackup-r2:pg16   # and :pg17, :pg18 if you pulled them
+rm -f ~/.local/bin/pgb
+# The pgb nightly containers, found by pgbackup-r2's image label:
+docker ps -a --filter "label=org.opencontainers.image.source=https://github.com/iotabyt/pgbackup-r2" --filter name=pgbackup
+docker rm -f pgbackup-shop                             # each name listed above
+docker image rm ghcr.io/iotabyt/pgbackup-r2:pg16       # and :pg17, :pg18 if you pulled them
 ```
 
 </TabItem>
 <TabItem label="PowerShell">
 
 ```powershell
-pgb nightly stop                      # in each folder where you started it
-Remove-Item -Recurse (Join-Path $HOME .pgb)
-notepad $PROFILE                      # delete the line "function pgb { ... }"
+Remove-Item -Recurse -Force (Join-Path $HOME .pgb)
+notepad $PROFILE    # delete the lines from "# >>> pgb" to "# <<< pgb <<<"
+docker ps -a --filter "label=org.opencontainers.image.source=https://github.com/iotabyt/pgbackup-r2" --filter name=pgbackup
+docker rm -f pgbackup-shop                             # each name listed above
 docker image rm ghcr.io/iotabyt/pgbackup-r2:pg16
 ```
 
+Older installs added a single `function pgb { ... }` line instead of the marked block. Delete that line.
+
 </TabItem>
 </Tabs>
-
-Your backups stay in the bucket, and your `.env` files stay where they are.
 
 ## Without Docker
 

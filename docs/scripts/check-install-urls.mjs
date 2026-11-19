@@ -9,7 +9,7 @@ import { join, relative } from "node:path";
 
 const DOCS = new URL("..", import.meta.url).pathname;
 const REPO = join(DOCS, "..");
-const RAW = /https:\/\/raw\.githubusercontent\.com\/iotabyt\/pgbackup-r2\/[^/\s]+\/scripts\/(install\.sh|pgb\.ps1|pgb)\b/g;
+const RAW = /https:\/\/raw\.githubusercontent\.com\/iotabyt\/pgbackup-r2\/[^/\s]+\/scripts\/(install\.sh|install\.ps1|pgb\.ps1|pgb)\b/g;
 const NOTE_PAGE = join(DOCS, "src/content/docs/start/install.mdx");
 const NOTE_HEADING = "## Install without the short URL";
 
@@ -40,12 +40,12 @@ for (const file of files) {
   for (const m of text.matchAll(RAW)) {
     if (allowed && m.index > allowed[0] && m.index < allowed[1]) continue;
     const line = text.slice(0, m.index).split("\n").length;
-    problems.push(`${relative(REPO, file)}:${line}: raw GitHub URL; use https://pgbackup-r2.iotabyt.com/install.${m[1] === "pgb.ps1" ? "ps1" : "sh"}`);
+    problems.push(`${relative(REPO, file)}:${line}: raw GitHub URL; use https://pgbackup-r2.iotabyt.com/install.${m[1].endsWith("ps1") ? "ps1" : "sh"}`);
   }
 }
 
 const redirects = await readFile(join(DOCS, "public/_redirects"), "utf8");
-for (const [from, script] of [["/install.sh", "install.sh"], ["/install.ps1", "pgb.ps1"]]) {
+for (const [from, script] of [["/install.sh", "install.sh"], ["/install.ps1", "install.ps1"]]) {
   const rule = new RegExp(`^${from.replace(".", "\\.")}\\s+https://raw\\.githubusercontent\\.com/iotabyt/pgbackup-r2/main/scripts/${script.replace(".", "\\.")}\\s+302$`, "m");
   if (!rule.test(redirects)) problems.push(`docs/public/_redirects: missing "${from} … scripts/${script} 302"`);
 }

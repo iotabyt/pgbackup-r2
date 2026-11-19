@@ -7,7 +7,7 @@
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 # Git Bash on Windows: don't rewrite /out
 
-PGB_VERSION=0.2.0
+PGB_VERSION=0.3.0
 REPO=ghcr.io/iotabyt/pgbackup-r2
 
 die() {
@@ -85,7 +85,7 @@ image_version() { # prints e.g. "0.2.0", or nothing if the image isn't here
 cmd_help() {
   if [[ $# -gt 0 ]]; then
     case $1 in
-    init | drill | nightly | update | version | help) own_help "$1" ;;
+    init | drill | nightly | update | version | uninstall | help) own_help "$1" ;;
     *) exec docker run --rm ${tty[@]+"${tty[@]}"} -e "PGB_VERSION=$PGB_VERSION" "$image" "$1" --help ;;
     esac
     return
@@ -108,6 +108,7 @@ pgb $PGB_VERSION: pgbackup-r2 through Docker, using ./.env (image $image)
                               back up every day at BACKUP_AT, in a background container
   pgb update                  pull the latest image for PG_MAJOR
   pgb version                 pgb's and the image's versions
+  pgb uninstall [--all]       remove pgb (--all: also the nightly containers and images)
 
 pgb help <command> shows what a command does, with examples.
 Docs: https://pgbackup-r2.iotabyt.com
@@ -178,6 +179,21 @@ Usage: pgb version
 
 Examples:
   pgb version
+EOF
+    ;;
+  uninstall)
+    cat <<'EOF'
+Remove pgb from this computer. Backups, .env files and keys are never touched.
+
+Usage: pgb uninstall [--all] [--yes]
+
+Removes pgb itself (in PowerShell, also its function in $PROFILE). With --all, it also
+removes the pgb nightly containers and the ghcr.io/iotabyt/pgbackup-r2 images. It lists
+what it will remove and asks first; --yes skips the question.
+
+Examples:
+  pgb uninstall                     # just pgb itself
+  pgb uninstall --all               # also the nightly containers and the images
 EOF
     ;;
   help)
@@ -447,6 +463,110 @@ cmd_update() {
   fi
 }
 
+# Containers and images built from our Dockerfile carry this label. pgb uninstall --all
+# only ever touches what has it, so nobody else's containers are at risk.
+OUR_LABEL=org.opencontainers.image.source=https://github.com/iotabyt/pgbackup-r2
+
+# Removes pgb itself, and with --all the nightly containers and our images. Never touches
+# .env files, out/ folders, anything in the bucket, or keys.
+cmd_uninstall() {
+  local all="" yes="" installed self line name state answer item
+  local files=() containers=() running=() images=()
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+    --all) all=yes ;;
+    --yes | -y) yes=yes ;;
+    *) die "pgb uninstall: unknown option $1. See pgb help uninstall." ;;
+    esac
+    shift
+  done
+
+  installed=$HOME/.local/bin/pgb
+  if [[ -f $installed ]]; then files+=("$installed"); fi
+  # The running copy too, if it's elsewhere. Never a source checkout's scripts/pgb, which
+  # sits next to install.sh.
+  self=$0
+  if [[ -f $self && ! $self -ef $installed && ! -f "$(dirname "$self")/install.sh" ]]; then
+    files+=("$self")
+  fi
+
+  if docker info >/dev/null 2>&1; then
+    while IFS= read -r line; do
+      name=${line%% *} state=${line#* }
+      # pgb nightly's names: pgbackup-<S3_PREFIX>, or just pgbackup.
+      if [[ $name == pgbackup || $name == pgbackup-* ]]; then
+        containers+=("$name")
+        if [[ $state == running ]]; then running+=("$name"); fi
+      fi
+    done < <(docker ps -a --filter "label=$OUR_LABEL" --filter name=pgbackup --format '{{.Names}} {{.State}}')
+    while IFS= read -r item; do
+      if [[ -n $item && $item != *"<none>"* ]]; then images+=("$item"); fi
+    done < <(docker images --filter "label=$OUR_LABEL" --filter "reference=$REPO:*" --format '{{.Repository}}:{{.Tag}}')
+  fi
+
+  if [[ ${#files[@]} -eq 0 && ( -z $all || ${#containers[@]}${#images[@]} == 00 ) ]]; then
+    echo "pgb is not installed: nothing to remove."
+    return 0
+  fi
+
+  echo "pgb uninstall will remove:"
+  for item in ${files[@]+"${files[@]}"}; do echo "  - $item (the pgb script)"; done
+  if [[ -n $all ]]; then
+    for item in ${containers[@]+"${containers[@]}"}; do
+      if [[ " ${running[*]-} " == *" $item "* ]]; then
+        echo "  - container $item (running: its scheduled backups stop)"
+      else
+        echo "  - container $item"
+      fi
+    done
+    for item in ${images[@]+"${images[@]}"}; do echo "  - image $item"; done
+  elif [[ ${#running[@]} -gt 0 ]]; then
+    echo
+    echo "Note: ${running[*]} is running, and uninstalling pgb leaves it running: it keeps"
+    echo "  taking backups. To stop them, run \`pgb nightly stop\` in its folder first, or use"
+    echo "  pgb uninstall --all."
+  fi
+  echo
+
+  if [[ -z $yes ]]; then
+    if [[ ! -t 0 ]]; then
+      die "not a terminal, so nothing was removed. To confirm, run: pgb uninstall${all:+ --all} --yes"
+    fi
+    read -r -p "Remove these? [y/N] " answer
+    if [[ $answer != [yY]* ]]; then
+      echo "Nothing removed."
+      return 0
+    fi
+  fi
+
+  if [[ -n $all ]]; then
+    for item in ${containers[@]+"${containers[@]}"}; do
+      docker rm -f "$item" >/dev/null && echo "Removed container $item"
+    done
+    for item in ${images[@]+"${images[@]}"}; do
+      docker rmi "$item" >/dev/null && echo "Removed image $item"
+    done
+  fi
+  for item in ${files[@]+"${files[@]}"}; do
+    rm -f "$item" && echo "Removed $item"
+  done
+
+  echo
+  echo "Left in place, on purpose:"
+  echo "  - Your backups in the bucket, with their manifests and .drills/ records, were not touched."
+  echo "  - Your .env files and out/ folders were not touched."
+  echo "  - Your private key is still wherever you saved it. You need it to open old backups."
+  if [[ -z $all && ${#images[@]} -gt 0 ]]; then
+    echo "  - The pgbackup-r2 Docker images. To remove them: docker image rm ${images[*]}"
+  fi
+  if [[ -z $all && ${#running[@]} -gt 0 ]]; then
+    echo "  - ${running[*]}, still running and taking backups. To stop it: docker rm -f ${running[*]}"
+  fi
+  echo "  - The ~/.local/bin line in your shell's startup file, if you added one. It's harmless."
+  echo
+  echo "To install pgb again: curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | sh"
+}
+
 cmd_version() {
   local v
   v=$(image_version)
@@ -456,7 +576,7 @@ cmd_version() {
 
 # --help on pgb's own commands shows help, rather than doing the thing.
 if [[ $# -gt 1 && " ${*:2} " =~ \ (-h|--help)\  ]]; then
-  case $1 in init | drill | nightly | update | version) own_help "$1" && exit 0 ;; esac
+  case $1 in init | drill | nightly | update | version | uninstall) own_help "$1" && exit 0 ;; esac
 fi
 
 case "${1:-help}" in
@@ -469,6 +589,7 @@ doctor) cmd_doctor ;;
 drill) shift && cmd_drill "$@" ;;
 nightly) shift && cmd_nightly "$@" ;;
 update) cmd_update ;;
+uninstall) shift && cmd_uninstall "$@" ;;
 version | --version) cmd_version ;;
 *)
   if [[ $1 != keygen ]]; then db_network; fi
