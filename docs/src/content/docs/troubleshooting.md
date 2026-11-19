@@ -56,6 +56,8 @@ Each line starts with ✓ (fine), ✗ (fails `doctor`, exit 1), ⚠ (worth a loo
 | Message | What it means, and the fix |
 |---|---|
 | `Docker isn't running, or you can't reach it` | Start Docker. On Linux, add yourself to the `docker` group. |
+| `Couldn't run the image …` | Docker couldn't pull or start the image. Check `PG_MAJOR` in `.env` (16, 17 or 18), and that Docker can reach `ghcr.io`. |
+| `Image 0.1.1 has no doctor checks of its own` | The image is too old for `doctor`. Run `pgb update`. |
 | `No .env in <folder>` | Run `pgb init`, or `cd` to the folder that has your `.env`. |
 | `Settings: X, Y are not set` | Fill them in. The fix line says what each one is. |
 | `Settings: TIERS: …` (or another setting) | A setting has a bad value. The fix shows the right form. |
@@ -71,6 +73,8 @@ Each line starts with ✓ (fine), ✗ (fails `doctor`, exit 1), ⚠ (worth a loo
 
 | Message | What to do |
 |---|---|
+| `The image is 0.3.0, older than pgb 0.3.2` | Run `pgb update` to pull the image that matches. Until then, newer features are skipped: `pgb drill` drills without its preflight check, with a one-line note. |
+| `pgb 0.3.2 is older than the image (…)` | Re-run the install line to update `pgb` itself. |
 | `This bucket has never been drilled.` | Run `pgb drill`. |
 | `Your last successful drill was 41 days ago.` | Run `pgb drill`. More than 35 days triggers this. |
 | `No drill has passed yet (last drill: FAIL, …)` | Fix what the drill reported, then drill again. |

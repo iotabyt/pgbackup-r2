@@ -6,7 +6,7 @@
 # PG_MAJOR (from .env, default 16) picks the image, and PGB_NETWORK joins a Docker network.
 # For developers: $env:PGB_IMAGE runs a different image, such as a local build (CONTRIBUTING.md).
 
-$PgbVersion = '0.3.1'
+$PgbVersion = '0.3.2'
 $Repo = 'ghcr.io/iotabyt/pgbackup-r2'
 $ErrorActionPreference = 'Stop'
 
@@ -74,6 +74,38 @@ function Add-DbNetwork {
         $script:common += '-e', $var
         Note "$var is on localhost: using host.docker.internal (Docker Desktop)"
     }
+}
+
+# The image version each newer feature needs. pgb checks before using one, so an older image
+# still works the old way, or pgb says to run `pgb update`: never "unrecognized arguments".
+$NeedsPreflight = '0.3.1'  # drill --preflight
+$NeedsDoctor = '0.2.0'     # the image's doctor and detect commands
+
+# True if version $a is older than $b. Both X.Y.Z; anything after the numbers is ignored.
+function VersionLt([string]$a, [string]$b) {
+    $parse = { param($v) $p = @(($v -split '\.') + @('0', '0', '0'))[0..2] | ForEach-Object { [int]('0' + ($_ -replace '\D.*$', '')) }; [version]::new($p[0], $p[1], $p[2]) }
+    return (& $parse $a) -lt (& $parse $b)
+}
+
+# The image's pgbackup-r2 version (e.g. 0.3.1), asked from the image once per run and
+# remembered against its ID. '' if it can't be found out. A missing image is pulled, as any
+# docker run would.
+$script:ImageVersionValue = ''; $script:ImageVersionId = '-'
+function Get-ImageVersion {
+    $id = Quiet { docker image inspect -f '{{.Id}}' $image }
+    if ($LASTEXITCODE -ne 0) { $id = '' }
+    if ("$id" -ne $script:ImageVersionId) {
+        $v = Quiet { docker run --rm $image --version }
+        $script:ImageVersionValue = if ($LASTEXITCODE -eq 0 -and $v) { ("$v" -split ' ')[-1].Trim() } else { '' }
+        $script:ImageVersionId = "$id"
+    }
+    return $script:ImageVersionValue
+}
+
+# True if the image is known to be older than $min.
+function ImageOlderThan([string]$min) {
+    $v = Get-ImageVersion
+    return [bool]$v -and (VersionLt $v $min)
 }
 
 function ImageVersion { # e.g. "0.2.0", or '' if the image isn't here
@@ -235,6 +267,9 @@ Examples:
 # pgb init --detect [--yes]: suggest TIERS/PRUNE from the bucket and, if you agree, put them
 # in .env (replacing any TIERS= and PRUNE= lines already there).
 function Invoke-Detect([bool]$yes) {
+    if (ImageOlderThan $NeedsDoctor) {
+        Fail "image $(Get-ImageVersion) can't look at the bucket's folders (it needs $NeedsDoctor or newer). Run ``pgb update``, then try again."
+    }
     # No -t: the explanation comes on stderr, the .env lines on stdout.
     $lines = @(docker run --rm @common $image detect --env-lines)
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -353,8 +388,13 @@ function New-Hex([int]$n) {
 function Invoke-Drill([string[]]$rest) {
     # The cheap checks first (a private key, the bucket, the backup), so a missing key or an
     # empty bucket fails here, before any network or Postgres exists.
-    docker run --rm @tty @common $image drill --preflight @rest
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # An image older than $NeedsPreflight has no preflight: then the drill goes ahead the old way.
+    if (ImageOlderThan $NeedsPreflight) {
+        [Console]::Error.WriteLine("note: image $(Get-ImageVersion) is older than pgb $PgbVersion; run ``pgb update``")
+    } elseif (Get-ImageVersion) {
+        docker run --rm @tty @common $image drill --preflight @rest
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
     $id = New-Hex 4; $pw = New-Hex 16
     $net = "pgb-drill-$id"; $db = "pgb-drill-$id-db"; $run = "pgb-drill-$id-run"
     # Postgres 18 images keep their data under /var/lib/postgresql, older ones in .../data.
@@ -411,6 +451,25 @@ function Invoke-Doctor {
     else {
         "$([char]0x2717) No .env in $((Get-Location).Path)"
         '    Run pgb init here, or cd to the folder that has your .env'
+        exit 1
+    }
+    $iv = Get-ImageVersion
+    if (-not $iv) {
+        "$([char]0x2717) Couldn't run the image $image"
+        '    Check the PG_MAJOR in .env, and that Docker can pull from ghcr.io'
+        exit 1
+    } elseif ($iv -eq $PgbVersion) {
+        "$([char]0x2713) pgb and the image are both $PgbVersion"
+    } elseif (VersionLt $iv $PgbVersion) {
+        "$([char]0x26A0) The image is $iv, older than pgb $PgbVersion"
+        '    Run `pgb update`.'
+    } else {
+        "$([char]0x26A0) pgb $PgbVersion is older than the image ($iv)"
+        '    Re-run the install line: irm https://pgbackup-r2.iotabyt.com/install.ps1 | iex'
+    }
+    if (VersionLt $iv $NeedsDoctor) {
+        "$([char]0x2717) Image $iv has no doctor checks of its own (they came in $NeedsDoctor)"
+        '    Run `pgb update`, then pgb doctor again.'
         exit 1
     }
     Add-DbNetwork

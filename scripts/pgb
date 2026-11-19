@@ -7,7 +7,7 @@
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 # Git Bash on Windows: don't rewrite /out
 
-PGB_VERSION=0.3.1
+PGB_VERSION=0.3.2
 REPO=ghcr.io/iotabyt/pgbackup-r2
 
 die() {
@@ -119,6 +119,41 @@ check_command() {
   fi
   echo "Run \`pgb help\` to see all commands." >&2
   exit 2
+}
+
+# The image version each newer feature needs. pgb checks before using one, so an older image
+# still works the old way, or pgb says to run `pgb update`: never "unrecognized arguments".
+NEEDS_PREFLIGHT=0.3.1 # drill --preflight
+NEEDS_DOCTOR=0.2.0    # the image's doctor and detect commands
+
+# True if version $1 is older than $2. Both X.Y.Z; anything after the numbers is ignored.
+version_lt() {
+  local a1 a2 a3 b1 b2 b3
+  IFS=. read -r a1 a2 a3 <<<"$1"
+  IFS=. read -r b1 b2 b3 <<<"$2"
+  a1=${a1%%[!0-9]*} a2=${a2%%[!0-9]*} a3=${a3%%[!0-9]*}
+  b1=${b1%%[!0-9]*} b2=${b2%%[!0-9]*} b3=${b3%%[!0-9]*}
+  if ((${a1:-0} != ${b1:-0})); then ((${a1:-0} < ${b1:-0})); return; fi
+  if ((${a2:-0} != ${b2:-0})); then ((${a2:-0} < ${b2:-0})); return; fi
+  ((${a3:-0} < ${b3:-0}))
+}
+
+# Sets IMAGE_VERSION to the image's pgbackup-r2 version (e.g. 0.3.1), asked from the image
+# once per run and remembered against its ID. Empty if it can't be found out. A missing image
+# is pulled, as any docker run would.
+IMAGE_VERSION="" IMAGE_VERSION_ID="-"
+load_image_version() {
+  local id
+  id=$(docker image inspect -f '{{.Id}}' "$image" 2>/dev/null || true)
+  if [[ $id == "$IMAGE_VERSION_ID" ]]; then return 0; fi
+  IMAGE_VERSION=$(docker run --rm "$image" --version 2>/dev/null | awk '{print $NF}' || true)
+  IMAGE_VERSION_ID=$id
+}
+
+# True if the image is known to be older than $1.
+image_older_than() {
+  load_image_version
+  [[ -n $IMAGE_VERSION ]] && version_lt "$IMAGE_VERSION" "$1"
 }
 
 image_version() { # prints e.g. "0.2.0", or nothing if the image isn't here
@@ -260,6 +295,9 @@ EOF
 # in .env (replacing any TIERS= and PRUNE= lines already there).
 cmd_detect() {
   local yes=$1 lines answer kept
+  if image_older_than "$NEEDS_DOCTOR"; then
+    die "image $IMAGE_VERSION can't look at the bucket's folders (it needs $NEEDS_DOCTOR or newer). Run \`pgb update\`, then try again."
+  fi
   # No -t: the explanation comes on stderr, the .env lines on stdout.
   lines=$(docker run --rm ${common[@]+"${common[@]}"} "$image" detect --env-lines) || exit $?
   [[ -n $lines ]] || return 0
@@ -373,8 +411,13 @@ EOF
 cmd_drill() {
   local id net db run pw rc vol
   # The cheap checks first (a private key, the bucket, the backup), so a missing key or an
-  # empty bucket fails here, before any network or Postgres exists.
-  docker run --rm ${tty[@]+"${tty[@]}"} ${common[@]+"${common[@]}"} "$image" drill --preflight "$@" || exit $?
+  # empty bucket fails here, before any network or Postgres exists. An image older than
+  # $NEEDS_PREFLIGHT has no preflight: then the drill goes ahead the old way.
+  if image_older_than "$NEEDS_PREFLIGHT"; then
+    echo "note: image $IMAGE_VERSION is older than pgb $PGB_VERSION; run \`pgb update\`" >&2
+  elif [[ -n $IMAGE_VERSION ]]; then
+    docker run --rm ${tty[@]+"${tty[@]}"} ${common[@]+"${common[@]}"} "$image" drill --preflight "$@" || exit $?
+  fi
   id=$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')
   pw=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
   net=pgb-drill-$id db=pgb-drill-$id-db run=pgb-drill-$id-run
@@ -430,6 +473,25 @@ cmd_doctor() {
   else
     echo "✗ No .env in $PWD"
     echo "    Run pgb init here, or cd to the folder that has your .env"
+    return 1
+  fi
+  load_image_version
+  if [[ -z $IMAGE_VERSION ]]; then
+    echo "✗ Couldn't run the image $image"
+    echo "    Check the PG_MAJOR in .env, and that Docker can pull from ghcr.io"
+    return 1
+  elif [[ $IMAGE_VERSION == "$PGB_VERSION" ]]; then
+    echo "✓ pgb and the image are both $PGB_VERSION"
+  elif version_lt "$IMAGE_VERSION" "$PGB_VERSION"; then
+    echo "⚠ The image is $IMAGE_VERSION, older than pgb $PGB_VERSION"
+    echo "    Run \`pgb update\`."
+  else
+    echo "⚠ pgb $PGB_VERSION is older than the image ($IMAGE_VERSION)"
+    echo "    Re-run the install line: curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | sh"
+  fi
+  if version_lt "$IMAGE_VERSION" "$NEEDS_DOCTOR"; then
+    echo "✗ Image $IMAGE_VERSION has no doctor checks of its own (they came in $NEEDS_DOCTOR)"
+    echo "    Run \`pgb update\`, then pgb doctor again."
     return 1
   fi
   db_network

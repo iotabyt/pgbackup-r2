@@ -55,6 +55,10 @@ case "$1" in
   info) echo "${FAKE_DOCKER_OS:-Ubuntu 24.04}"; exit "${FAKE_DOCKER_INFO_RC:-0}" ;;
 esac
 case "$1 $2" in "image inspect") exit 1 ;; esac
+for last in "$@"; do :; done
+if [ "$1" = run ] && [ "$last" = --version ]; then  # the image's version, for feature checks
+  echo "pgbackup-r2 ${FAKE_IMAGE_VERSION}"; exit 0
+fi
 case " $* " in *" drill --preflight"*)  # the image's preflight before pgb drill starts anything
   if [ "${FAKE_PREFLIGHT_RC:-0}" != 0 ]; then echo "no private key, so the backup can't be decrypted" >&2; fi
   exit "${FAKE_PREFLIGHT_RC:-0}" ;;
@@ -97,6 +101,7 @@ def run_fake(shell: list[str], cwd: Path, *args: str, env: dict[str, str] | None
     full_env = clean_env(**(env or {}))
     full_env["PATH"] = f"{fake_bin}{os.pathsep}{full_env['PATH']}"
     full_env["FAKE_DOCKER_LOG"] = str(log)
+    full_env.setdefault("FAKE_IMAGE_VERSION", __version__)  # an image as new as pgb
     result = subprocess.run(
         [*shell, *args],
         cwd=cwd,
@@ -121,9 +126,13 @@ def strip_env(argv: list[str]) -> list[str]:
     return [a for a in argv if not a.startswith(("ENV:", "KEYS:"))]
 
 
+def is_version_check(call: list[str]) -> bool:
+    return call[:1] == ["run"] and strip_env(call)[-1:] == ["--version"]
+
+
 def run_calls(calls: list[list[str]]) -> list[list[str]]:
-    """The `docker run` calls, without the recorded DATABASE_URL."""
-    return [strip_env(c) for c in calls if c[:1] == ["run"]]
+    """The `docker run` calls, without the recorded DATABASE_URL or pgb's version checks."""
+    return [strip_env(c) for c in calls if c[:1] == ["run"] and not is_version_check(c)]
 
 
 def run_env(calls: list[list[str]]) -> list[str]:
@@ -133,7 +142,8 @@ def run_env(calls: list[list[str]]) -> list[str]:
 
 def run_keys(calls: list[list[str]]) -> list[str]:
     """The PGB_ENV_KEYS each `docker run` call saw."""
-    return [c[-2].removeprefix("KEYS:") for c in calls if c[:1] == ["run"]]
+    runs = [c for c in calls if c[:1] == ["run"] and not is_version_check(c)]
+    return [c[-2].removeprefix("KEYS:") for c in runs]
 
 
 # --- passthrough ---------------------------------------------------------------------------
@@ -366,23 +376,45 @@ PATH=/fake:$PATH bash /s/pgb decrypt latest --out /out/x
 # --- drill, with real Docker ---------------------------------------------------------------
 
 STUB = "pgb-test-drill-stub"
-STUB_DOCKERFILE = """FROM postgres:16
-# Stands in for pgbackup-r2: proves DRILL_DATABASE_URL reaches the scratch database, then
-# sleeps for STUB_SLEEP seconds and exits with STUB_EXIT. Like the real image, it stops on
-# SIGINT (sh only runs the trap during `wait`, not while a foreground command runs).
-ENTRYPOINT ["sh", "-c", "[ \\"$2\\" = --preflight ] && exit ${STUB_PREFLIGHT_EXIT:-0}; psql \\"$DRILL_DATABASE_URL\\" -tAc 'select 6*7' || exit 1; trap 'exit 130' INT TERM; sleep ${STUB_SLEEP:-0} & wait $!; exit ${STUB_EXIT:-0}", "stub"]
+OLD_STUB = "pgb-test-drill-stub-030"
+STUB_DOCKERFILE = f"""FROM postgres:16
+# Stands in for pgbackup-r2. It reports STUB_VERSION, answers drill --preflight (an image
+# older than 0.3.1 rejects it, as the real 0.3.0 does), proves DRILL_DATABASE_URL reaches the
+# scratch database, then sleeps for STUB_SLEEP seconds and exits with STUB_EXIT. Like the real
+# image, it stops on SIGINT (sh only runs the trap during `wait`, not a foreground command).
+ENV STUB_VERSION={__version__}
+COPY <<'EOF' /stub.sh
+#!/bin/sh
+if [ "$1" = --version ]; then echo "pgbackup-r2 $STUB_VERSION"; exit 0; fi
+if [ "$2" = --preflight ]; then
+  if [ "$STUB_VERSION" = 0.3.0 ]; then
+    echo "pgbackup-r2: error: unrecognized arguments: --preflight" >&2; exit 2
+  fi
+  exit "${{STUB_PREFLIGHT_EXIT:-0}}"
+fi
+psql "$DRILL_DATABASE_URL" -tAc 'select 6*7' || exit 1
+trap 'exit 130' INT TERM
+sleep "${{STUB_SLEEP:-0}}" & wait $!
+exit "${{STUB_EXIT:-0}}"
+EOF
+RUN chmod +x /stub.sh
+ENTRYPOINT ["/stub.sh"]
 """
 
 
 @pytest.fixture(scope="module")
 def stub_image():
-    subprocess.run(
-        ["docker", "build", "-q", "-t", STUB, "-"],
-        input=STUB_DOCKERFILE,
-        text=True,
-        check=True,
-        capture_output=True,
-    )
+    for tag, dockerfile in (
+        (STUB, STUB_DOCKERFILE),
+        (OLD_STUB, f"FROM {STUB}\nENV STUB_VERSION=0.3.0\n"),
+    ):
+        subprocess.run(
+            ["docker", "build", "-q", "-t", tag, "-"],
+            input=dockerfile,
+            text=True,
+            check=True,
+            capture_output=True,
+        )
     yield STUB
 
 
@@ -904,7 +936,7 @@ def test_drill_starts_nothing_when_preflight_fails(shell, tmp_path):
     result, calls = run_fake(shell, tmp_path, "drill", env={"FAKE_PREFLIGHT_RC": "1"})
     assert result.returncode == 1
     assert "no private key" in result.stderr
-    [only] = [strip_env(c) for c in calls]  # one docker call: the preflight
+    [only] = run_calls(calls)  # besides the version check, one docker call: the preflight
     assert only[-3:] == ["ghcr.io/iotabyt/pgbackup-r2:pg16", "drill", "--preflight"]
     assert not any(c[:2] == ["network", "create"] for c in calls)
     assert not any("postgres:16" in c for c in calls)
@@ -914,7 +946,9 @@ def test_drill_starts_nothing_when_preflight_fails(shell, tmp_path):
 def test_drill_runs_preflight_first_then_starts_postgres(shell, tmp_path):
     result, calls = run_fake(shell, tmp_path, "drill", "2026-11-18T020000Z")
     assert result.returncode == 0, result.stderr
-    calls = [strip_env(c) for c in calls]
+    calls = [
+        strip_env(c) for c in calls if not is_version_check(c) and c[:2] != ["image", "inspect"]
+    ]
     first = calls[0]
     assert first[-4:] == [
         "ghcr.io/iotabyt/pgbackup-r2:pg16",
@@ -993,3 +1027,90 @@ def test_nightly_note_about_age_identity(shell, tmp_path):
         "note: .env has AGE_IDENTITY. That's fine on your own machine; on a server, "
         "leave it out (backups only need AGE_RECIPIENTS)."
     ) in result.stderr.splitlines()
+
+
+# --- older images ----------------------------------------------------------------------------
+
+
+def version_checks(calls: list[list[str]]) -> int:
+    return sum(1 for c in calls if is_version_check(c))
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_drill_with_an_older_image_skips_the_preflight(shell, tmp_path):
+    result, calls = run_fake(shell, tmp_path, "drill", env={"FAKE_IMAGE_VERSION": "0.3.0"})
+    assert result.returncode == 0, result.stderr
+    assert f"note: image 0.3.0 is older than pgb {__version__}; run `pgb update`" in (
+        result.stderr.splitlines()
+    )
+    runs = run_calls(calls)
+    assert not any("--preflight" in c for c in runs)  # never "unrecognized arguments"
+    assert any(c[:2] == ["network", "create"] for c in calls)  # the drill goes ahead
+    assert runs[-1][-1:] == ["drill"]
+    assert version_checks(calls) == 1  # asked once per run
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize(
+    "image, line, fix",
+    [
+        (__version__, f"✓ pgb and the image are both {__version__}", None),
+        ("0.3.0", f"⚠ The image is 0.3.0, older than pgb {__version__}", "    Run `pgb update`."),
+        (
+            "9.9.9",
+            f"⚠ pgb {__version__} is older than the image (9.9.9)",
+            "    Re-run the install line",
+        ),
+    ],
+)
+def test_doctor_compares_pgb_and_image_versions(shell, tmp_path, image, line, fix):
+    (tmp_path / ".env").write_text("S3_BUCKET=b\n")
+    result, calls = run_fake(shell, tmp_path, "doctor", env={"FAKE_IMAGE_VERSION": image})
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert line in lines
+    if fix:
+        assert lines[lines.index(line) + 1].startswith(fix)
+    assert run_calls(calls)[-1][-1:] == ["doctor"]  # the image's own checks still run
+    assert version_checks(calls) == 1
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_features_an_old_image_lacks_say_so_instead_of_failing(shell, tmp_path):
+    (tmp_path / ".env").write_text("S3_BUCKET=b\n")
+    result, calls = run_fake(shell, tmp_path, "doctor", env={"FAKE_IMAGE_VERSION": "0.1.1"})
+    assert result.returncode == 1
+    assert "✗ Image 0.1.1 has no doctor checks of its own (they came in 0.2.0)" in result.stdout
+    assert run_calls(calls) == []  # no `doctor` sent to an image that would reject it
+
+    result, calls = run_fake(
+        shell, tmp_path, "init", "--detect", "--yes", env={"FAKE_IMAGE_VERSION": "0.1.1"}
+    )
+    assert result.returncode == 1
+    assert (
+        "image 0.1.1 can't look at the bucket's folders (it needs 0.2.0 or newer)" in result.stderr
+    )
+    assert "pgb update" in result.stderr
+    assert run_calls(calls) == []
+
+
+@needs_docker
+@pytest.mark.parametrize("shell", SHELLS)
+def test_drill_works_with_a_real_older_image(shell, tmp_path, stub_image):
+    """An image that rejects --preflight (like 0.3.0) still drills, with a note."""
+    assert leftovers() == []
+    result = subprocess.run(
+        [*shell, "drill"],
+        cwd=tmp_path,
+        env=clean_env(PG_MAJOR="16", PGB_IMAGE=OLD_STUB),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    out = result.stdout + result.stderr
+    assert result.returncode == 0, out
+    assert f"note: image 0.3.0 is older than pgb {__version__}" in out
+    assert "unrecognized arguments" not in out
+    assert "42" in result.stdout.split()  # it really drilled against the scratch database
+    assert leftovers() == []

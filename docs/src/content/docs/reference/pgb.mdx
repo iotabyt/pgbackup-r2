@@ -46,7 +46,7 @@ Copy [`examples/drill/.env.example`](https://github.com/iotabyt/pgbackup-r2/blob
 
 ### `pgb doctor`
 
-Checks that Docker is running and `.env` exists, then runs the image's [`doctor`](/reference/cli/#doctor) with the same network options as a backup. Exits 1 if any check fails. [Troubleshooting](/troubleshooting/#doctors-messages) explains every message.
+Checks that Docker is running, that `.env` exists, and that `pgb` and the image are the same version (⚠ with "run `pgb update`" when the image is older). Then it runs the image's [`doctor`](/reference/cli/#doctor) with the same network options as a backup. Exits 1 if any check fails. [Troubleshooting](/troubleshooting/#doctors-messages) explains every message.
 
 <details>
 <summary>Without pgb</summary>

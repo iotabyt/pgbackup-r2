@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.3.2 (2026-11-19)
+
+- **`pgb` works with an older image.** Before using a feature the image may not have, `pgb` asks the image for its version (once per run, remembered by image ID) and compares it with the version that feature needs.
+  - **`pgb drill` with an image older than 0.3.1** skips the preflight with a note ("image 0.3.0 is older than pgb 0.3.2; run `pgb update`") and drills the old way, instead of failing with "unrecognized arguments".
+  - **Images older than 0.2.0 have no `doctor` or `detect`.** `pgb doctor` and `pgb init --detect` say so and point to `pgb update`.
+- **`pgb doctor` compares versions:** ✓ when `pgb` and the image match, ⚠ with "run `pgb update`" when the image is older, and ⚠ with the install line when `pgb` is.
+
+### Upgrading from 0.3.1
+
+Re-run the install line, then `pgb update` in each backup folder.
+
 ## 0.3.1 (2026-11-19)
 
 Polish found while backing up Labpadi for real.
