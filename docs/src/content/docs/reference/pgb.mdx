@@ -63,11 +63,12 @@ Add `--network <project>_default` for a database in Docker Compose, or `--networ
 
 A full drill with no compose file:
 
-1. Creates a private Docker network.
-2. Starts `postgres:<PG_MAJOR>` there, with a random password and in-memory storage.
-3. Waits for it (up to 60 seconds).
-4. Runs the image's `drill` against it.
-5. Removes the database and the network afterwards, even after a failure or Ctrl+C.
+1. Runs the image's `drill --preflight`: a private key is set, the bucket answers, the backup exists. If not, it stops with that message and starts nothing.
+2. Creates a private Docker network.
+3. Starts `postgres:<PG_MAJOR>` there, with a random password and in-memory storage.
+4. Waits for it (up to 60 seconds).
+5. Runs the image's `drill` against it.
+6. Removes the database and the network afterwards, even after a failure or Ctrl+C.
 
 The exit code is the drill's. `STAMP` is `latest` (the default), a stamp, or `<tier>/<stamp>`.
 
@@ -89,7 +90,7 @@ Scheduled backups in a background container named `pgbackup-<S3_PREFIX>`. It run
 
 | Command | What it does |
 |---|---|
-| `start` | Starts the container. If it's already running, says so and does nothing. Warns if `.env` contains the private key. |
+| `start` | Starts the container. If it's already running, says so and does nothing. If `.env` has `AGE_IDENTITY`, it notes that's fine on your own machine, but that a server only needs `AGE_RECIPIENTS`. |
 | `status` | Running or not, since when, restarts, and the last 10 log lines. Exits 3 if there's no container. |
 | `logs [-f]` | The last 100 log lines. `-f` follows. |
 | `stop` | Stops and removes the container. Backups already taken stay in the bucket. |
@@ -135,6 +136,16 @@ It lists what it will remove and asks first. `--yes` skips the question, and wit
 With no command: a short list of commands. With one, such as `pgb help drill`: what that command does, its usage and examples. pgb's own commands (`init`, `drill`, `nightly`, `update`, `version`) have their own help. For the rest, `pgb` shows the image's. `--help` or `-h` after any command shows the same, and on pgb's own commands it does nothing else: `pgb drill --help` doesn't start a database.
 
 A short list of commands. So do `pgb`, `pgb -h` and `pgb --help`.
+
+## Unknown commands
+
+A command `pgb` doesn't know stops before any container starts, with exit code 2 and the closest match:
+
+```text
+$ pgb uninstal
+pgb: unknown command "uninstal". Did you mean "uninstall"?
+Run `pgb help` to see all commands.
+```
 
 ## Everything else
 

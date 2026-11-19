@@ -37,19 +37,19 @@ def parse_url(url: str) -> PgTarget:
         port = parts.port
     except ValueError as exc:
         raise ConfigError(
-            f"not a valid Postgres URL: {redact(url)} ({exc})",
+            f"not a valid Postgres URL: {short(url)} ({exc})",
             hint="Write it as postgresql://user:password@host:5432/dbname",
         ) from None
     if parts.scheme not in SCHEMES:
         shown = parts.scheme or "none"
         raise ConfigError(
-            f"unsupported URL scheme '{shown}' in {redact(url)}",
+            f"unsupported URL scheme '{shown}' in {short(url)}",
             hint="Write it as postgresql://user:password@host:5432/dbname",
         )
     dbname = unquote(parts.path.lstrip("/"))
     if not dbname:
         raise ConfigError(
-            f"{redact(url)} has no database name",
+            f"{short(url)} has no database name",
             hint="Write it as postgresql://user:password@host:5432/dbname",
         )
     sslmode = parse_qs(parts.query).get("sslmode", [None])[-1]
@@ -103,6 +103,28 @@ def same_database(a: str, b: str) -> bool:
 
 
 _QUERY_PASSWORD = re.compile(r"(?i)(password=)[^&]*")
+
+
+def short(url: str) -> str:
+    """How a database is shown in output: host/dbname, with :port unless it's 5432.
+
+    Never the user, the password or the query string (sslmode, channel_binding, ...):
+    ep-withered-cell-batk9adw.c-8.eu-central-1.aws.neon.tech/labpadi
+    """
+    try:
+        parts = urlsplit(url.strip())
+        host, port = parts.hostname or "", parts.port
+        db = unquote(parts.path.lstrip("/"))
+    except ValueError:
+        # Not a URL we can take apart: keep only what's after any user:password@, before ?.
+        rest = url.strip().rpartition("@")[2].split("?")[0].split("#")[0]
+        return rest.rpartition("://")[2] or "the database URL"
+    if ":" in host:  # IPv6
+        host = f"[{host}]"
+    if not host:
+        host = "local socket"
+    where = host if port in (None, 5432) else f"{host}:{port}"
+    return f"{where}/{db}" if db else where
 
 
 def redact(url: str) -> str:

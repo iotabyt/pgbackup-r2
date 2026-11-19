@@ -48,6 +48,6 @@ The stamp is the UTC time the backup started, as `2026-11-18T020000Z`, so names 
 
 ## Passwords and the process list
 
-Connection details reach `pg_dump`, `pg_restore` and `psql` as `PGHOST`, `PGPASSWORD` and so on, in their environment. They're never passed as arguments, so passwords don't show up in `ps`. Inherited `PG*` variables are cleared first, so a stray `PGHOST` can't redirect a backup. Logged URLs show the password as `***`.
+Connection details reach `pg_dump`, `pg_restore` and `psql` as `PGHOST`, `PGPASSWORD` and so on, in their environment. They're never passed as arguments, so passwords don't show up in `ps`. Inherited `PG*` variables are cleared first, so a stray `PGHOST` can't redirect a backup. Output shows a database only as `host/dbname` (with `:port` if it isn't 5432), never its user, password or query string.
 
 `pgb` follows the same rule. It passes rewritten URLs and the drill's random password to Docker by name (`-e VAR`), never as `-e VAR=value`.

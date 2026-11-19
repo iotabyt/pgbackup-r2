@@ -543,3 +543,28 @@ def test_errors_without_their_own_hint_point_at_doctor():
     assert _hint(RuntimeError("anything")) == DOCTOR_HINT
     assert "S3_ENDPOINT" in _hint(EndpointConnectionError(endpoint_url="http://x"))
     assert _hint(CommandError("x", hint="Do this")) == "Do this"
+
+
+# --- drill --preflight ------------------------------------------------------------------------
+
+
+def test_drill_preflight_checks_key_bucket_and_backup(s3, monkeypatch, capsys):
+    monkeypatch.delenv("DRILL_DATABASE_URL", raising=False)  # preflight needs no database
+    monkeypatch.delenv("AGE_IDENTITY", raising=False)
+    monkeypatch.delenv("AGE_IDENTITY_FILE", raising=False)
+    assert main(["drill", "--preflight", "--plain"]) == 1
+    assert "no private key, so the backup can't be decrypted" in capsys.readouterr().err
+
+    monkeypatch.setenv("AGE_IDENTITY", "AGE-SECRET-KEY-1" + "Q" * 58)
+    assert main(["drill", "--preflight", "--plain"]) == 1
+    err = capsys.readouterr().err
+    assert "no backups found under s3://tiers-test/" in err
+    assert "pgb backup" in err  # the next thing to run
+
+    run_backup(Store(settings()), s3, at("2026-11-18T02:00:00"))
+    assert main(["drill", "--preflight", "--plain", "2026-01-01T000000Z"]) == 1
+    assert "no backup 2026-01-01T000000Z" in capsys.readouterr().err
+    assert main(["drill", "--preflight", "--plain"]) == 0
+    assert (
+        "preflight: 2026-11-18T020000Z.dump.age (26 B) is ready to drill" in capsys.readouterr().err
+    )

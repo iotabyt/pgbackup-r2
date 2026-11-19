@@ -110,7 +110,7 @@ docker compose logs backup
 The service runs `schedule` by default: it sleeps until `BACKUP_AT`, backs up, prunes and pings. Its log is plain timestamped lines:
 
 ```text
-2026-11-18T02:00:01Z INFO backing up postgresql://***@db:5432/shop to s3://ama-backups/shop/2026-11-18T020001Z.dump.age
+2026-11-18T02:00:01Z INFO backing up db/shop to s3://ama-backups/shop/2026-11-18T020001Z.dump.age
 2026-11-18T02:00:23Z INFO backed up shop/2026-11-18T020001Z.dump.age (48.2 MB, 37 tables) in 22.1s
 ```
 

@@ -55,6 +55,10 @@ case "$1" in
   info) echo "${FAKE_DOCKER_OS:-Ubuntu 24.04}"; exit "${FAKE_DOCKER_INFO_RC:-0}" ;;
 esac
 case "$1 $2" in "image inspect") exit 1 ;; esac
+case " $* " in *" drill --preflight"*)  # the image's preflight before pgb drill starts anything
+  if [ "${FAKE_PREFLIGHT_RC:-0}" != 0 ]; then echo "no private key, so the backup can't be decrypted" >&2; fi
+  exit "${FAKE_PREFLIGHT_RC:-0}" ;;
+esac
 for last in "$@"; do :; done
 if [ "$last" = "--env-lines" ]; then  # the image's `detect --env-lines`
   echo "Found folders daily/ (lifecycle: delete after 30 days) and monthly/." >&2
@@ -366,7 +370,7 @@ STUB_DOCKERFILE = """FROM postgres:16
 # Stands in for pgbackup-r2: proves DRILL_DATABASE_URL reaches the scratch database, then
 # sleeps for STUB_SLEEP seconds and exits with STUB_EXIT. Like the real image, it stops on
 # SIGINT (sh only runs the trap during `wait`, not while a foreground command runs).
-ENTRYPOINT ["sh", "-c", "psql \\"$DRILL_DATABASE_URL\\" -tAc 'select 6*7' || exit 1; trap 'exit 130' INT TERM; sleep ${STUB_SLEEP:-0} & wait $!; exit ${STUB_EXIT:-0}", "stub"]
+ENTRYPOINT ["sh", "-c", "[ \\"$2\\" = --preflight ] && exit ${STUB_PREFLIGHT_EXIT:-0}; psql \\"$DRILL_DATABASE_URL\\" -tAc 'select 6*7' || exit 1; trap 'exit 130' INT TERM; sleep ${STUB_SLEEP:-0} & wait $!; exit ${STUB_EXIT:-0}", "stub"]
 """
 
 
@@ -889,3 +893,103 @@ def test_installer_fails_clearly_when_github_cant_be_reached(shell, tmp_path):
     # Never a quiet fallback to main: nothing was installed.
     assert not (m.home / ".local" / "bin" / "pgb").exists()
     assert not (m.home / ".pgb").exists()
+
+
+# --- drill preflight ------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_drill_starts_nothing_when_preflight_fails(shell, tmp_path):
+    (tmp_path / ".env").write_text("S3_BUCKET=b\n")
+    result, calls = run_fake(shell, tmp_path, "drill", env={"FAKE_PREFLIGHT_RC": "1"})
+    assert result.returncode == 1
+    assert "no private key" in result.stderr
+    [only] = [strip_env(c) for c in calls]  # one docker call: the preflight
+    assert only[-3:] == ["ghcr.io/iotabyt/pgbackup-r2:pg16", "drill", "--preflight"]
+    assert not any(c[:2] == ["network", "create"] for c in calls)
+    assert not any("postgres:16" in c for c in calls)
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_drill_runs_preflight_first_then_starts_postgres(shell, tmp_path):
+    result, calls = run_fake(shell, tmp_path, "drill", "2026-11-18T020000Z")
+    assert result.returncode == 0, result.stderr
+    calls = [strip_env(c) for c in calls]
+    first = calls[0]
+    assert first[-4:] == [
+        "ghcr.io/iotabyt/pgbackup-r2:pg16",
+        "drill",
+        "--preflight",
+        "2026-11-18T020000Z",
+    ]
+    network = next(i for i, c in enumerate(calls) if c[:2] == ["network", "create"])
+    postgres = next(i for i, c in enumerate(calls) if "postgres:16" in c)
+    assert 0 < network < postgres
+
+
+# --- unknown commands ------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_unknown_command_suggests_the_closest(shell, tmp_path):
+    result, calls = run_fake(shell, tmp_path, "uninstal")
+    assert result.returncode == 2
+    assert result.stderr.splitlines() == [
+        'pgb: unknown command "uninstal". Did you mean "uninstall"?',
+        "Run `pgb help` to see all commands.",
+    ]
+    assert calls == []
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("args", [["foo"], ["help", "foo"]])
+def test_unknown_word_gets_no_guess(shell, tmp_path, args):
+    result, calls = run_fake(shell, tmp_path, *args)
+    assert result.returncode == 2
+    assert result.stderr.splitlines() == [
+        'pgb: unknown command "foo".',
+        "Run `pgb help` to see all commands.",
+    ]
+    assert calls == []
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_options_before_the_command_still_reach_the_image(shell, tmp_path):
+    result, calls = run_fake(shell, tmp_path, "--plain", "list")
+    assert result.returncode == 0, result.stderr
+    assert run_calls(calls)[0][-2:] == ["--plain", "list"]
+
+
+def test_wrapper_command_lists_match_the_cli():
+    """Every image command is either passed through or wrapped by pgb, and nothing's invented."""
+    import argparse
+
+    from pgbackup_r2.cli import build_parser
+
+    sub = next(a for a in build_parser()._actions if isinstance(a, argparse._SubParsersAction))
+    cli = set(sub.choices)
+    bash = PGB.read_text()
+    ps1 = PGB_PS1.read_text()
+    image_bash = set(re.search(r'^IMAGE_COMMANDS="([^"]+)"', bash, re.M).group(1).split())
+    own_bash = re.search(r'^OWN_COMMANDS="([^"]+)"', bash, re.M).group(1).split()
+    image_ps = set(
+        re.findall(r"'([a-z]+)'", re.search(r"^\$ImageCommands = @\(([^)]+)\)", ps1, re.M).group(1))
+    )
+    own_ps = re.findall(
+        r"'([a-z]+)'", re.search(r"^\$OwnCommands = @\(([^)]+)\)", ps1, re.M).group(1)
+    )
+    assert image_bash == image_ps and own_bash == own_ps
+    assert image_bash <= cli  # passed straight through: must exist in the image
+    assert not image_bash & set(own_bash)
+    assert cli - image_bash <= set(own_bash)  # the rest (doctor, drill) are wrapped by pgb
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_nightly_note_about_age_identity(shell, tmp_path):
+    (tmp_path / ".env").write_text("S3_PREFIX=shop\nAGE_IDENTITY=AGE-SECRET-KEY-1X\n")
+    result, _ = run_fake(shell, tmp_path, "nightly", "start")
+    assert result.returncode == 0, result.stderr
+    assert (
+        "note: .env has AGE_IDENTITY. That's fine on your own machine; on a server, "
+        "leave it out (backups only need AGE_RECIPIENTS)."
+    ) in result.stderr.splitlines()

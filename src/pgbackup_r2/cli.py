@@ -159,6 +159,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="STAMP|latest",
         help="latest (the default), a stamp like 2026-11-18T020000Z, or <tier>/<stamp>",
     )
+    p.add_argument(
+        "--preflight",
+        action="store_true",
+        help="only check the private key, the bucket and that the backup exists; restores "
+        "nothing and needs no database (pgb drill runs this before starting Postgres)",
+    )
 
     add(
         "keygen",
@@ -262,6 +268,8 @@ def _dispatch(args: argparse.Namespace) -> int:
         target = settings.restore_target(args.target)
         return commands.restore(settings, args.stamp, target, to_production=args.to_production)
     if cmd == "drill":
+        if args.preflight:
+            return commands.drill_preflight(settings, args.stamp)
         return commands.drill(settings, args.stamp)
     if cmd == "decrypt":
         return commands.decrypt(

@@ -7,6 +7,8 @@ Start with `pgb doctor`. It checks each piece in turn and prints a fix under wha
 
 ## Installing pgb
 
+**`pgb: unknown command "…"`.** A typo in the command. `pgb` suggests the closest one it knows, and `pgb help` lists them all. (This is `pgb` answering, so it's installed fine.)
+
 **`pgb: command not found`.** `~/.local/bin` isn't on your `PATH`. Run the line for your shell from [Install pgb](/start/install/#put-localbin-on-your-path), then open a new terminal. Check with `echo $PATH`.
 
 **`zsh: command not found: pgb` right after installing.** zsh only rereads `~/.zshrc` in a new terminal, and it caches where commands live. Open a new terminal, or run `source ~/.zshrc` (or `rehash`).

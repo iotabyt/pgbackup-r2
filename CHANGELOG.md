@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.3.1 (2026-11-19)
+
+Polish found while backing up Labpadi for real.
+
+- **`pgb drill` checks before starting Postgres.** It first runs the image's new `drill --preflight`: a private key is set, the bucket answers, the backup exists. A missing key or an empty bucket now fails in a second, with the same message as before and no container or network started.
+- **Shorter database URLs in output.**
+  - A database shows as `host/dbname`, with `:port` if it isn't 5432: `ep-withered-cell-batk9adw.c-8.eu-central-1.aws.neon.tech/labpadi`.
+  - The user, password and query string (`sslmode`, `channel_binding`) never appear, in `restore`, `drill`, `doctor`, `backup` or the nightly log.
+  - `restore` names its target once, in the final `PASS` line.
+- **`pgb nightly start` and `AGE_IDENTITY`:** the note now reads "note: .env has AGE_IDENTITY. That's fine on your own machine; on a server, leave it out (backups only need AGE_RECIPIENTS)."
+- **Unknown commands stop before any container starts**, with the closest match: `pgb: unknown command "uninstal". Did you mean "uninstall"?` The exit code is 2.
+
+### Upgrading from 0.3.0
+
+Re-run the install line, then `pgb update` in each backup folder.
+
 ## 0.3.0 (2026-11-19)
 
 - Short install URL: `curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | sh`. It redirects (302) to the installer on GitHub. The README and docs use it everywhere, and the Install page keeps the GitHub URLs for networks that block redirects.

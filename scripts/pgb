@@ -7,7 +7,7 @@
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 # Git Bash on Windows: don't rewrite /out
 
-PGB_VERSION=0.3.0
+PGB_VERSION=0.3.1
 REPO=ghcr.io/iotabyt/pgbackup-r2
 
 die() {
@@ -76,6 +76,51 @@ db_network() {
   done
 }
 
+# Every command pgb knows: its own, then the image's. Anything else is a typo (pgb unknown).
+OWN_COMMANDS="help init doctor drill nightly update version uninstall"
+IMAGE_COMMANDS="backup list prune restore keygen detect decrypt verify schedule"
+
+# The edit distance between two words (Levenshtein), for "Did you mean ...?". Plain
+# indexed arrays and arithmetic only, so it runs on bash 3.2.
+edit_distance() {
+  local a=$1 b=$2 i j cost del ins sub best
+  local -a prev cur
+  for ((j = 0; j <= ${#b}; j++)); do prev[j]=$j; done
+  for ((i = 1; i <= ${#a}; i++)); do
+    cur=("$i")
+    for ((j = 1; j <= ${#b}; j++)); do
+      cost=1
+      if [[ "${a:i-1:1}" == "${b:j-1:1}" ]]; then cost=0; fi
+      del=$((prev[j] + 1)) ins=$((cur[j - 1] + 1)) sub=$((prev[j - 1] + cost))
+      best=$del
+      if ((ins < best)); then best=$ins; fi
+      if ((sub < best)); then best=$sub; fi
+      cur[j]=$best
+    done
+    prev=("${cur[@]}")
+  done
+  echo "${prev[${#b}]}"
+}
+
+# Exits 2 with a suggestion if $1 isn't a command pgb knows. Starts no container.
+check_command() {
+  local word=$1 known best="" bestd=99 d
+  for known in $OWN_COMMANDS $IMAGE_COMMANDS; do
+    if [[ $word == "$known" ]]; then return 0; fi
+  done
+  for known in $OWN_COMMANDS $IMAGE_COMMANDS; do
+    d=$(edit_distance "$word" "$known")
+    if ((d < bestd)); then bestd=$d best=$known; fi
+  done
+  if ((bestd <= 2 && bestd < ${#word})); then
+    printf 'pgb: unknown command "%s". Did you mean "%s"?\n' "$word" "$best" >&2
+  else
+    printf 'pgb: unknown command "%s".\n' "$word" >&2
+  fi
+  echo "Run \`pgb help\` to see all commands." >&2
+  exit 2
+}
+
 image_version() { # prints e.g. "0.2.0", or nothing if the image isn't here
   if docker image inspect "$image" >/dev/null 2>&1; then
     docker run --rm "$image" --version 2>/dev/null | awk '{print $NF}'
@@ -84,6 +129,7 @@ image_version() { # prints e.g. "0.2.0", or nothing if the image isn't here
 
 cmd_help() {
   if [[ $# -gt 0 ]]; then
+    check_command "$1"
     case $1 in
     init | drill | nightly | update | version | uninstall | help) own_help "$1" ;;
     *) exec docker run --rm ${tty[@]+"${tty[@]}"} -e "PGB_VERSION=$PGB_VERSION" "$image" "$1" --help ;;
@@ -326,6 +372,9 @@ EOF
 
 cmd_drill() {
   local id net db run pw rc vol
+  # The cheap checks first (a private key, the bucket, the backup), so a missing key or an
+  # empty bucket fails here, before any network or Postgres exists.
+  docker run --rm ${tty[@]+"${tty[@]}"} ${common[@]+"${common[@]}"} "$image" drill --preflight "$@" || exit $?
   id=$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')
   pw=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
   net=pgb-drill-$id db=pgb-drill-$id-db run=pgb-drill-$id-run
@@ -409,7 +458,7 @@ cmd_nightly() {
     fi
     if [[ -n $state ]]; then docker rm -f "$name" >/dev/null; fi
     if [[ -n $(env_value AGE_IDENTITY) ]]; then
-      echo "pgb: note: .env has AGE_IDENTITY; backups don't need it. Leave it out on a server." >&2
+      echo "note: .env has AGE_IDENTITY. That's fine on your own machine; on a server, leave it out (backups only need AGE_RECIPIENTS)." >&2
     fi
     db_network
     docker run -d --name "$name" --restart unless-stopped ${common[@]+"${common[@]}"} "$image" schedule >/dev/null
@@ -592,6 +641,8 @@ update) cmd_update ;;
 uninstall) shift && cmd_uninstall "$@" ;;
 version | --version) cmd_version ;;
 *)
+  # Options first (pgb --plain list) go straight to the image, which checks them itself.
+  if [[ $1 != -* ]]; then check_command "$1"; fi
   if [[ $1 != keygen ]]; then db_network; fi
   exec docker run --rm ${tty[@]+"${tty[@]}"} ${common[@]+"${common[@]}"} "$image" "$@"
   ;;

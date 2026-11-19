@@ -12,7 +12,7 @@ PG_MAJOR=17      # run SHOW server_version; against your database
 `pgb doctor` connects and checks this for you. A mismatch is a ✗:
 
 ```text
-✗ Database: postgresql://***@db:5432/shop is PostgreSQL 17.2, but PG_MAJOR is 16
+✗ Database: db/shop is PostgreSQL 17.2, but PG_MAJOR is 16
     Set PG_MAJOR=17 in .env, so the image (pg17) and the drill's scratch database match the server
 ```
 

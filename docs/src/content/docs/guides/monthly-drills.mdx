@@ -46,6 +46,7 @@ docker compose down -v            # throw the scratch database away
 
 `pgb drill`:
 
+1. checks the cheap things first: a private key, the bucket, and that the backup exists. If any is missing, it stops here, with nothing started
 1. starts a throwaway `postgres:<PG_MAJOR>` on a private Docker network, with a random password, stored in memory only
 2. waits for it to be ready (up to 60 seconds)
 3. downloads the backup, checks its checksum, decrypts it and restores it

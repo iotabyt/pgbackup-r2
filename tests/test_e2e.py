@@ -342,7 +342,7 @@ def test_doctor_all_good_and_leaves_nothing_in_the_bucket(env, monkeypatch, caps
     assert main(["doctor", "--plain"]) == 0
     out = capsys.readouterr().out
     assert "✓ Settings: everything a backup needs is set (storage: AWS S3)" in out
-    assert "✓ Database: connected to postgresql://***@" in out
+    assert "✓ Database: connected to localhost/pgbr_live_" in out
     assert f"✓ Bucket: s3://{BUCKET}/{PREFIX}/ is writable" in out
     assert "✓ Keys: AGE_IDENTITY opens what is encrypted to AGE_RECIPIENTS" in out
     assert "✗" not in out
@@ -373,7 +373,7 @@ def test_doctor_missing_settings_and_unknown_host(env, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "✗ Settings: AGE_RECIPIENTS is not set" in out
     assert "- AGE_IDENTITY isn't set: fine for a backup-only server" in out
-    assert "✗ Database: can't connect to postgresql://***@db-that-does-not-exist.invalid" in out
+    assert "✗ Database: can't connect to db-that-does-not-exist.invalid/app" in out
     assert 'Nothing called "db-that-does-not-exist.invalid" can be found' in out
     assert "PGB_NETWORK=<project>_default" in out
     assert "pw" not in out.replace("pwd", "")
@@ -439,3 +439,31 @@ def test_drill_records_pass_and_fail(env, capsys):
     # The records don't show up as backups, and `prune` leaves them alone.
     assert main(["prune"]) == 0
     assert len(drill_records(env["s3"])) == 2
+
+
+def test_output_never_shows_credentials_or_query(env, monkeypatch, capsys, caplog):
+    """Database URLs appear as host/dbname: no user, password, sslmode or channel_binding."""
+    query = "?sslmode=disable&channel_binding=prefer"
+    monkeypatch.setenv("DATABASE_URL", env["live"] + query)
+    monkeypatch.setenv("DRILL_DATABASE_URL", env["scratch"] + query)
+    monkeypatch.setenv("RESTORE_DATABASE_URL", env["scratch"] + query)
+    monkeypatch.setenv("PG_MAJOR", str(server_major(env["live"])))
+    password = urlsplit(ADMIN_URL).password or ""
+
+    outputs = {}
+    for cmd in (["backup"], ["list"], ["verify"], ["drill"], ["restore"], ["doctor"]):
+        caplog.clear()
+        main([*cmd, "--plain"])
+        captured = capsys.readouterr()
+        outputs[cmd[0]] = captured.out + captured.err + caplog.text
+    for name, text in outputs.items():
+        for line in text.splitlines():
+            assert "sslmode" not in line and "channel_binding" not in line, (name, line)
+            assert "@" not in line, (name, line)
+            if password:
+                assert f":{password}@" not in line and f"={password}" not in line, (name, line)
+    # restore names its target once: in the result line, not in the step lines too.
+    scratch = urlsplit(env["scratch"])
+    shown = f"{scratch.hostname}{'' if scratch.port in (None, 5432) else f':{scratch.port}'}{scratch.path}"
+    restore_lines = [ln for ln in outputs["restore"].splitlines() if shown in ln]
+    assert len(restore_lines) == 1 and restore_lines[0].startswith("PASS  "), restore_lines

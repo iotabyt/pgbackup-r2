@@ -28,7 +28,8 @@ from .checks import (
 )
 from .config import Settings, unknown_settings
 from .errors import CommandError, PgBackupError
-from .pgurl import parse_url, redact, same_database
+from .pgurl import parse_url, same_database
+from .pgurl import short as short_url
 from .retention import select_expired
 from .scheduling import format_times, next_run, parse_times, sleep_until
 from .stamps import DUMP_SUFFIX, MANIFEST_SUFFIX, make_stamp, manifest_key, parse_stamp
@@ -81,7 +82,7 @@ def backup(settings: Settings, *, prune: bool | None = None) -> str:
 
     with ui.step(
         "Counting rows",
-        log_line=f"backing up {redact(url)} to s3://{store.bucket}/{key}",
+        log_line=f"backing up {short_url(url)} to s3://{store.bucket}/{key}",
     ) as s:
         version = pg.server_version(url)
         tables = pg.table_counts(url)
@@ -300,7 +301,7 @@ def _confirm_production(target: str) -> None:
             "nothing was restored",
             hint="With Docker, run it as `docker run --rm -it ...`",
         )
-    print(f"This will overwrite the LIVE database {redact(target)}.", file=sys.stderr)
+    print(f"This will overwrite the LIVE database {short_url(target)}.", file=sys.stderr)
     answer = input(f"Type the database name ({dbname}) to continue: ")
     if answer.strip() != dbname:
         raise CommandError(
@@ -315,7 +316,7 @@ def restore(settings: Settings, which: str | None, target: str, *, to_production
     if settings.database_url and same_database(target, settings.database_url):
         if not to_production:
             raise CommandError(
-                f"refusing to restore into {redact(target)}: it's the live database "
+                f"refusing to restore into {short_url(target)}: it's the live database "
                 "(same as DATABASE_URL)",
                 hint="Pass --to-production if you really mean to overwrite it",
             )
@@ -327,15 +328,24 @@ def restore(settings: Settings, which: str | None, target: str, *, to_production
     with workdir() as tmp:
         plain = os.path.join(tmp, f"{b.stamp}.dump")
         _fetch_and_decrypt(settings, store, b, tmp, plain)
+        # The target is named once, in the result below: not in the step lines too.
         with ui.step(
-            f"Restoring into {redact(target)}",
-            done=f"Restored into {redact(target)}",
-            log_line=f"restoring {b.key} into {redact(target)}",
+            "Restoring", done="Restored", log_line=f"restoring {b.key} with pg_restore"
         ) as s:
             pg.restore(target, plain)
-    ui.info(f"restored {b.key} into {redact(target)} in {s.seconds:.1f}s")
-    if ui.is_interactive():
-        ui.result(True, f"{b.key} restored into {redact(target)}")
+    ui.result(True, f"{b.key} restored into {short_url(target)}", [f"in {s.seconds:.1f}s"])
+    return 0
+
+
+def drill_preflight(settings: Settings, which: str | None) -> int:
+    """The cheap part of a drill: a private key, a reachable bucket, the backup itself.
+
+    `pgb drill` runs this before starting a throwaway Postgres, so a missing key or an empty
+    bucket fails in a second, with nothing to clean up. Same checks and messages as drill.
+    """
+    agecrypt.require_identity(settings)
+    b = Store(settings).resolve(which)
+    ui.info(f"preflight: {b.key} ({human_size(b.size)}) is ready to drill")
     return 0
 
 
@@ -343,7 +353,7 @@ def drill(settings: Settings, which: str | None) -> int:
     url = settings.require_drill_url()
     if settings.database_url and same_database(url, settings.database_url):
         raise CommandError(
-            f"refusing to drill: DRILL_DATABASE_URL ({redact(url)}) is the live database",
+            f"refusing to drill: DRILL_DATABASE_URL ({short_url(url)}) is the live database",
             hint="Point DRILL_DATABASE_URL at a scratch database the drill can wipe",
         )
     agecrypt.require_identity(settings)
@@ -362,8 +372,8 @@ def drill(settings: Settings, which: str | None) -> int:
             _fetch_and_decrypt(settings, store, b, tmp, plain)
             with ui.step(
                 "Restoring into the scratch database",
-                done=f"Restored into {redact(url)}",
-                log_line=f"restoring {b.key} into {redact(url)}",
+                done="Restored into the scratch database",
+                log_line=f"restoring {b.key} into {short_url(url)}",
             ) as s:
                 pg.restore(url, plain)
             seconds = s.seconds
@@ -606,7 +616,7 @@ def schedule(settings: Settings, at: str | None, *, run_now: bool) -> int:
     settings.require_bucket()
     require_tools("psql", "pg_dump", "age")
     ui.info(
-        f"pgbackup-r2 {__version__}: backing up {redact(settings.database_url or '')} "
+        f"pgbackup-r2 {__version__}: backing up {short_url(settings.database_url or '')} "
         f"at {format_times(times)} UTC every day"
     )
     if run_now:
@@ -688,7 +698,7 @@ def doctor(env: Mapping[str, str] | None = None) -> int:
 
     # The database: reachable, and the same major version as PG_MAJOR and this image's tools.
     if settings.database_url:
-        db = redact(settings.database_url)
+        db = short_url(settings.database_url)
         try:
             num = int(pg.psql(settings.database_url, "SHOW server_version_num"))
             version = pg.server_version(settings.database_url).split()[0]

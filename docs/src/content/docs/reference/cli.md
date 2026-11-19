@@ -37,6 +37,9 @@ Through `pgb`, usage and examples say `pgb`. Run directly, they say `pgbackup-r2
 
 ## Output
 
+A database is shown as `host/dbname`, with `:port` if it isn't 5432: `ep-withered-cell-batk9adw.c-8.eu-central-1.aws.neon.tech/labpadi`. The user, password and query string (`sslmode`, `channel_binding`) never appear. `restore` names its target once, in its final `PASS` line.
+
+
 Output is **interactive**, with spinners, ✓ steps, tables and a big PASS/FAIL, when stdout is a terminal and `NO_COLOR` isn't set. Otherwise it's **plain**: timestamped log lines on stderr, and results on stdout. `--plain` forces plain output, and `schedule` is always plain. Docker only gives a container a terminal with `-it`, which `pgb` and `docker compose run` add for you.
 
 ## `backup`
@@ -70,9 +73,11 @@ Downloads a backup and checks its sha256. Then it decrypts it, checks it's a `pg
 
 ## `drill`
 
-`drill [STAMP]`
+`drill [STAMP] [--preflight]`
 
 Restores a backup into `DRILL_DATABASE_URL` and compares every table's row count with the manifest. It records the result in `<prefix>/.drills/`, then pings the heartbeat. Exits 1 on FAIL. It refuses to run if `DRILL_DATABASE_URL` is the same database as `DATABASE_URL`. `pgb drill` provides the scratch database for you.
+
+`--preflight` runs only the cheap checks: a private key is set, the bucket answers, and the backup exists. It restores nothing and needs no `DRILL_DATABASE_URL`. `pgb drill` runs it before starting Postgres.
 
 ## `restore`
 

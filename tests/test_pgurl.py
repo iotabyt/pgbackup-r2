@@ -72,3 +72,25 @@ def test_redact():
     )
     assert redact("postgresql://host/db?password=hunter2") == "postgresql://host/db?password=***"
     assert redact("postgresql://host/db") == "postgresql://host/db"
+
+
+@pytest.mark.parametrize(
+    "url, shown",
+    [
+        (
+            "postgresql://labpadi_owner:s3cret@ep-withered-cell-batk9adw.c-8.eu-central-1.aws.neon.tech"
+            "/labpadi?sslmode=require&channel_binding=require",
+            "ep-withered-cell-batk9adw.c-8.eu-central-1.aws.neon.tech/labpadi",
+        ),
+        ("postgres://app:pw@db:5432/shop", "db/shop"),
+        ("postgres://app:pw@db:6543/shop?sslmode=disable", "db:6543/shop"),
+        ("postgresql://[::1]:5433/x", "[::1]:5433/x"),
+        ("postgresql:///app?host=/var/run/postgresql", "local socket/app"),
+        ("postgresql://u:secret@host:notaport/db?sslmode=require", "host:notaport/db"),
+    ],
+)
+def test_short_shows_host_and_db_only(url, shown):
+    from pgbackup_r2.pgurl import short
+
+    assert short(url) == shown
+    assert "secret" not in short(url) and "@" not in short(url) and "?" not in short(url)

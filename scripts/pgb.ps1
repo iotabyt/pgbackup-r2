@@ -6,7 +6,7 @@
 # PG_MAJOR (from .env, default 16) picks the image, and PGB_NETWORK joins a Docker network.
 # For developers: $env:PGB_IMAGE runs a different image, such as a local build (CONTRIBUTING.md).
 
-$PgbVersion = '0.3.0'
+$PgbVersion = '0.3.1'
 $Repo = 'ghcr.io/iotabyt/pgbackup-r2'
 $ErrorActionPreference = 'Stop'
 
@@ -84,9 +84,46 @@ function ImageVersion { # e.g. "0.2.0", or '' if the image isn't here
     return ''
 }
 
+# Every command pgb knows: its own, then the image's. Anything else is a typo.
+$OwnCommands = @('help', 'init', 'doctor', 'drill', 'nightly', 'update', 'version', 'uninstall')
+$ImageCommands = @('backup', 'list', 'prune', 'restore', 'keygen', 'detect', 'decrypt', 'verify', 'schedule')
+
+# The edit distance between two words (Levenshtein), for "Did you mean ...?".
+function EditDistance([string]$a, [string]$b) {
+    $prev = 0..$b.Length
+    for ($i = 1; $i -le $a.Length; $i++) {
+        $cur = @($i) + @(0) * $b.Length
+        for ($j = 1; $j -le $b.Length; $j++) {
+            $cost = if ($a[$i - 1] -ceq $b[$j - 1]) { 0 } else { 1 }
+            $cur[$j] = [Math]::Min([Math]::Min($prev[$j] + 1, $cur[$j - 1] + 1), $prev[$j - 1] + $cost)
+        }
+        $prev = $cur
+    }
+    return $prev[$b.Length]
+}
+
+# Exits 2 with a suggestion if $word isn't a command pgb knows. Starts no container.
+function Assert-Command([string]$word) {
+    $known = $OwnCommands + $ImageCommands
+    if ($known -ccontains $word) { return }
+    $best = ''; $bestD = 99
+    foreach ($k in $known) {
+        $d = EditDistance $word $k
+        if ($d -lt $bestD) { $bestD = $d; $best = $k }
+    }
+    if ($bestD -le 2 -and $bestD -lt $word.Length) {
+        [Console]::Error.WriteLine("pgb: unknown command `"$word`". Did you mean `"$best`"?")
+    } else {
+        [Console]::Error.WriteLine("pgb: unknown command `"$word`".")
+    }
+    [Console]::Error.WriteLine('Run `pgb help` to see all commands.')
+    exit 2
+}
+
 function Show-Help([string[]]$rest) {
     if ($rest.Count -gt 0) {
         $which = $rest[0]
+        Assert-Command $which
         if ($OwnHelp.ContainsKey($which)) { $OwnHelp[$which]; return }
         docker run --rm @tty -e "PGB_VERSION=$PgbVersion" $image $which --help
         exit $LASTEXITCODE
@@ -314,6 +351,10 @@ function New-Hex([int]$n) {
 }
 
 function Invoke-Drill([string[]]$rest) {
+    # The cheap checks first (a private key, the bucket, the backup), so a missing key or an
+    # empty bucket fails here, before any network or Postgres exists.
+    docker run --rm @tty @common $image drill --preflight @rest
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     $id = New-Hex 4; $pw = New-Hex 16
     $net = "pgb-drill-$id"; $db = "pgb-drill-$id-db"; $run = "pgb-drill-$id-run"
     # Postgres 18 images keep their data under /var/lib/postgresql, older ones in .../data.
@@ -400,7 +441,7 @@ function Invoke-Nightly([string[]]$rest) {
             }
             if ($state) { Quiet { docker rm -f $name } | Out-Null }
             if (EnvValue 'AGE_IDENTITY') {
-                [Console]::Error.WriteLine("pgb: note: .env has AGE_IDENTITY; backups don't need it. Leave it out on a server.")
+                [Console]::Error.WriteLine("note: .env has AGE_IDENTITY. That's fine on your own machine; on a server, leave it out (backups only need AGE_RECIPIENTS).")
             }
             Add-DbNetwork
             docker run -d --name $name --restart unless-stopped @common $image schedule | Out-Null
@@ -591,6 +632,8 @@ try {
         'uninstall' { Invoke-Uninstall $rest }
         { $_ -in 'version', '--version' } { Show-Version; exit 0 }
         default {
+            # Options first (pgb --plain list) go straight to the image, which checks them itself.
+            if (-not $cmd.StartsWith('-')) { Assert-Command $cmd }
             if ($cmd -ne 'keygen') { Add-DbNetwork }
             docker run --rm @tty @common $image @args
             exit $LASTEXITCODE
