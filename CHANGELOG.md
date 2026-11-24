@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.4.1 (2026-11-24)
+
+- **PyPI has its own page now.** It leads with `pip install` and `uv tool install`, what you need on your `PATH`, the minimal config and the commands to run. The GitHub README still leads with Docker and `pgb`.
+- **CI:** the PyPI publish workflow uses actions that run on Node 24, so GitHub's Node 20 deprecation warning is gone.
+
+### Upgrading from 0.4.0
+
+Nothing to change. Re-run the install line, then `pgb update` in each backup folder. Or `pip install -U pgbackup-r2`.
+
 ## 0.4.0 (2026-11-24)
 
 pgbackup-r2 is on PyPI now. Docker and `pgb` stay the main way to run it, and nothing about how it works has changed.

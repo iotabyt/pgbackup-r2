@@ -4,7 +4,7 @@
 FROM python:3.12-slim-bookworm AS build
 COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /usr/local/bin/uv
 WORKDIR /src
-COPY pyproject.toml uv.lock README.md LICENSE ./
+COPY pyproject.toml uv.lock README.md PYPI.md LICENSE ./
 COPY src ./src
 RUN uv build --wheel --out-dir /dist
 

@@ -2,7 +2,8 @@
 name = "pgbackup-r2"
 dynamic = ["version"]
 description = "Encrypted Postgres backups to Cloudflare R2 (or any S3), with restore drills that prove they work."
-readme = "README.md"
+# PyPI gets its own page, which leads with pip and uv; README.md stays the GitHub front page.
+readme = "PYPI.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -64,6 +65,7 @@ include = [
     "/examples/",
     "/scripts/",
     "/README.md",
+    "/PYPI.md",
     "/CHANGELOG.md",
     "/LICENSE",
     "/Dockerfile",
