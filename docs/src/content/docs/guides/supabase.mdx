@@ -1,0 +1,54 @@
+---
+title: Back up Supabase Postgres to Cloudflare R2
+description: Back up a Supabase Postgres database to Cloudflare R2 with GitHub Actions, pg_dump and age, through the Session pooler. Not tested on Supabase yet.
+sidebar:
+  label: Supabase
+next:
+  link: /guides/monthly-drills/
+  label: Monthly drills
+---
+
+import { Steps, Aside } from "@astrojs/starlight/components";
+
+<Aside type="caution" title="Not tested on Supabase yet">
+pgbackup-r2 runs in production on [Neon](/guides/neon/), but nobody has run it against a Supabase project yet. Everything below follows from how Supabase connections work, so it should get you going. If you try it, [open an issue](https://github.com/iotabyt/pgbackup-r2/issues) with what happened, good or bad, and this page will catch up.
+</Aside>
+
+The setup is the same as for any managed database: a scheduled GitHub Actions workflow takes the backups, and your laptop runs the drills. What's different is the connection string.
+
+## The connection string
+
+In your Supabase project, open **Connect**. Use one of these two:
+
+- **Direct connection** (`db.<project-ref>.supabase.co`). It's IPv6, unless your project has the IPv4 add-on. GitHub's hosted runners have no IPv6, so from Actions you need the add-on.
+- **Session pooler** (port 5432). It works over IPv4, and gives `pg_dump` a full session. Without the add-on, it's the one to pick for GitHub Actions.
+
+The **Transaction pooler** (port 6543) isn't recommended for `pg_dump`, which expects a full session.
+
+Add `?sslmode=require` to the end if it isn't there already. Then check the major version with `SHOW server_version;` and set `PG_MAJOR` to match.
+
+## Set it up
+
+<Steps>
+
+1. **On your laptop:** `pgb init`, `pgb keygen`, then fill in `.env` with the Session pooler string as `DATABASE_URL`, the R2 settings and `AGE_RECIPIENTS`. Uncomment `AGE_IDENTITY` here, on the laptop only.
+
+2. **Check it and try a round trip by hand:**
+
+   ```bash
+   pgb doctor
+   pgb backup && pgb drill
+   ```
+
+3. **In a private GitHub repo,** set up [the nightly workflow](/guides/managed-databases/#the-workflow) with the Session pooler string in the `DATABASE_URL` secret, and the image tag that matches your `PG_MAJOR`.
+
+</Steps>
+
+## What to watch for
+
+- **The drill restores into a plain `postgres` image, not into Supabase.** Supabase databases usually come with Supabase's own extensions and schemas, and a plain Postgres doesn't have all of them. If `pgb drill` fails on an extension that isn't available, that's this, not a broken backup. Please report it, with the error, so drills can learn to handle it.
+- **Roles and ownership aren't in the dump** (`--no-owner --no-acl`), as with any pgbackup-r2 backup. Restoring into a new Supabase project means recreating roles and grants there.
+
+## Next
+
+**[Monthly drills](/guides/monthly-drills/)**: prove a backup restores, every month.

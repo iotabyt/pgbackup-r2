@@ -1,6 +1,8 @@
 ---
-title: Kamal 2
-description: Run nightly backups as a Kamal 2 accessory.
+title: "Postgres backups with Kamal 2"
+sidebar:
+  label: "Kamal 2"
+description: "Run nightly encrypted Postgres backups to Cloudflare R2 as a Kamal 2 accessory next to your database, with pg_dump, age and a heartbeat."
 next:
   link: /guides/monthly-drills/
   label: Monthly drills

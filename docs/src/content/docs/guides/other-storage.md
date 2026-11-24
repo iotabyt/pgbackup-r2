@@ -1,6 +1,8 @@
 ---
-title: Other storage
-description: Use AWS S3, Backblaze B2 or MinIO instead of R2.
+title: "Back up Postgres to AWS S3, Backblaze B2 or MinIO"
+sidebar:
+  label: "Other storage"
+description: "Use pgbackup-r2 with any S3-compatible storage: AWS S3, Backblaze B2 or MinIO. Which endpoint and region to set, and what the token needs."
 next:
   link: /concepts/keys/
   label: Keys and security

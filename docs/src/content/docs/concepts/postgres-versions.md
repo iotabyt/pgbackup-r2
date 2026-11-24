@@ -1,6 +1,8 @@
 ---
-title: Postgres versions
-description: Why the image has to match your server's major version, and what goes wrong when it doesn't.
+title: "Match pg_dump to your Postgres version"
+sidebar:
+  label: "Postgres versions"
+description: "Why the pgbackup-r2 image must match your Postgres major version: pg_dump version mismatches, transaction_timeout errors on restore, and upgrades."
 ---
 
 The images are tagged by Postgres major version: `pg16`, `pg17` and `pg18`. Each one carries `pg_dump`, `pg_restore` and `psql` from that version. **Use the tag that matches your server's major version.** `pgb` picks it from `PG_MAJOR` in `.env`:

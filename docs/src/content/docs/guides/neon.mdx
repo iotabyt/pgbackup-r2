@@ -1,0 +1,67 @@
+---
+title: Back up Neon Postgres to Cloudflare R2
+description: Nightly encrypted backups of a Neon Postgres database to Cloudflare R2 with GitHub Actions, pg_dump and age. Tested on Neon with Postgres 18.
+sidebar:
+  label: Neon
+next:
+  link: /guides/monthly-drills/
+  label: Monthly drills
+---
+
+import { Steps, Aside } from "@astrojs/starlight/components";
+
+This is the setup pgbackup-r2 runs on in production: a Neon database on Postgres 18, backed up every night by GitHub Actions to R2, with drills from a laptop. Neon gives you no server to run a container on, so the workflow does the backing up.
+
+## The connection string
+
+In the Neon console, open your project's **Connect** dialog.
+
+- **Turn connection pooling off.** You want the **direct** host, the one *without* `-pooler` in its name. `pg_dump` needs a real session, and Neon's pooler works in transaction mode.
+- **Keep the query string.** Neon's strings end in `?sslmode=require` (often with `&channel_binding=require` too). Keep it. pgbackup-r2 never prints the query string, or the password, in its output.
+- **Check the major version** with `SHOW server_version;`. For Postgres 18, that's `PG_MAJOR=18` and the `pg18` image.
+
+```bash
+DATABASE_URL=postgresql://app_owner:<password>@ep-example-123456.eu-central-1.aws.neon.tech/app?sslmode=require
+```
+
+## Set it up
+
+<Steps>
+
+1. **On your laptop, set everything up and check it once.**
+
+   ```bash
+   mkdir ~/backups/myapp && cd ~/backups/myapp
+   pgb init
+   pgb keygen                # private key -> password manager, and AGE_IDENTITY in this .env
+   ```
+
+   Fill in `.env`: `PG_MAJOR=18`, the Neon `DATABASE_URL`, the R2 settings and `AGE_RECIPIENTS`. On this laptop, also uncomment `AGE_IDENTITY` with the private key.
+
+   ```bash
+   pgb doctor                # all ✓: your laptop can reach Neon and R2, and the keys match
+   pgb backup && pgb drill   # the whole round trip, once, by hand
+   ```
+
+   The first connection after a quiet spell can take a moment while Neon wakes the compute up.
+
+2. **In a private GitHub repo,** copy [`examples/nightly-backup.yml`](https://github.com/iotabyt/pgbackup-r2/blob/main/examples/nightly-backup.yml) to `.github/workflows/`. Set the image tag to `pg18`, and the prefix to your app's. Then add these secrets under *Settings → Secrets and variables → Actions*:
+   - `DATABASE_URL`, the direct Neon string
+   - `AGE_RECIPIENTS`, the **public** key only
+   - `R2_ENDPOINT` and `R2_BUCKET`
+   - `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`
+   - `HEARTBEAT_URL`, and optionally `HEARTBEAT_FAIL_URL`
+
+3. **Run it once by hand:** **Actions** → *nightly backup* → **Run workflow**. Back on the laptop, `pgb list` shows the new backup, and `pgb verify` opens it.
+
+</Steps>
+
+From then on, GitHub backs up every night. A failed run emails you, and the heartbeat tells you if the schedule ever stops. [Managed databases](/guides/managed-databases/#the-workflow) explains the workflow line by line.
+
+<Aside type="tip">
+Drills restore into a throwaway `postgres:18` on your laptop, not into Neon. They don't touch your Neon project or its compute hours.
+</Aside>
+
+## Next
+
+**[Monthly drills](/guides/monthly-drills/)**: prove a backup restores, every month.

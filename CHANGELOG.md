@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+## 0.4.0 (2026-11-24)
+
+pgbackup-r2 is on PyPI now. Docker and `pgb` stay the main way to run it, and nothing about how it works has changed.
+
+- **On PyPI:** `pip install pgbackup-r2`, or `uv tool install pgbackup-r2`, or try it with `uvx pgbackup-r2 --version`. You still need `pg_dump`, `pg_restore`, `psql` and `age` on your `PATH` for that route.
+- **New guides:** [Neon](https://pgbackup-r2.iotabyt.com/guides/neon/), the setup pgbackup-r2 runs on in production (Postgres 18), and [Supabase](https://pgbackup-r2.iotabyt.com/guides/supabase/), which isn't tested yet and says so. Managed databases is now a short hub for both.
+- **Docs, for people searching:**
+  - Every page has a clearer title and description.
+  - The homepage has its own title, a proper link preview and structured data.
+  - There's a `robots.txt` that points at the sitemap.
+  - Workers preview URLs are off, so only `pgbackup-r2.iotabyt.com` gets indexed.
+- **Docs fixes:**
+  - GitHub's 60-day pause for scheduled workflows only applies to public repos, and the docs now say so.
+  - The Supabase connection advice is gentler: the direct host (IPv6, or IPv4 with the add-on) or the Session pooler, and the Transaction pooler isn't recommended.
+- **Packaging:**
+  - Full PyPI metadata: keywords, classifiers and project links.
+  - The README uses absolute links, so it renders on PyPI.
+  - The Docker images carry OCI labels for title, description, url and documentation.
+
+### Upgrading from 0.3.2
+
+Nothing to change. Re-run the install line, then `pgb update` in each backup folder.
+
 ## 0.3.2 (2026-11-19)
 
 - **`pgb` works with an older image.** Before using a feature the image may not have, `pgb` asks the image for its version (once per run, remembered by image ID) and compares it with the version that feature needs.

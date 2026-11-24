@@ -2,7 +2,7 @@
 # pgb function to your $PROFILE, between marker comments that `pgb uninstall` looks for.
 #   irm https://pgbackup-r2.iotabyt.com/install.ps1 | iex
 # A specific release:
-#   $env:PGB_VERSION = 'v0.2.0'; irm https://pgbackup-r2.iotabyt.com/install.ps1 | iex
+#   $env:PGB_VERSION = 'v0.4.0'; irm https://pgbackup-r2.iotabyt.com/install.ps1 | iex
 # Running it again updates pgb.ps1 and leaves $PROFILE alone.
 
 & {
@@ -26,7 +26,7 @@
     if (-not $version) {
         throw ("pgb installer: couldn't find the latest pgb release: GitHub's API didn't answer. " +
             "Check your connection and try again (the API allows 60 requests an hour per address), " +
-            "or name a release: `$env:PGB_VERSION = 'v0.3.0'; irm https://pgbackup-r2.iotabyt.com/install.ps1 | iex. " +
+            "or name a release: `$env:PGB_VERSION = 'v0.4.0'; irm https://pgbackup-r2.iotabyt.com/install.ps1 | iex. " +
             "Releases: https://github.com/$repo/tags")
     }
     $url = if ($env:PGB_URL) { $env:PGB_URL } else { "https://raw.githubusercontent.com/$repo/$version/scripts/pgb.ps1" }

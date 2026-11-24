@@ -5,9 +5,10 @@
 # The database must accept connections from outside: GitHub's runners connect from changing
 # addresses all over Azure, so an IP allowlist won't work unless it allows them all.
 #   Neon       use the direct host, without "-pooler".
-#   Supabase   the direct host (db.<ref>.supabase.co) is IPv6-only, and GitHub's runners have
-#              no IPv6. Use the Session pooler string (port 5432), not the Transaction
-#              pooler (port 6543), which pg_dump can't use.
+#   Supabase   the direct host (db.<ref>.supabase.co) is IPv6 unless you have the IPv4 add-on,
+#              and GitHub's runners have no IPv6. Use the direct host with the add-on, or the
+#              Session pooler (port 5432). The Transaction pooler (port 6543) isn't
+#              recommended for pg_dump.
 #
 # Secrets to add (Settings > Secrets and variables > Actions):
 #   DATABASE_URL          postgresql://user:password@host:5432/dbname?sslmode=require
@@ -17,8 +18,9 @@
 #   R2_BUCKET             the bucket name
 #   R2_ACCESS_KEY_ID      an R2 token with Object Read & Write on the bucket
 #   R2_SECRET_ACCESS_KEY
-#   HEARTBEAT_URL         optional, recommended: GitHub disables scheduled workflows in repos
-#   HEARTBEAT_FAIL_URL    with no activity for 60 days, and a heartbeat notices the silence.
+#   HEARTBEAT_URL         optional, recommended: a heartbeat notices when backups stop, for
+#   HEARTBEAT_FAIL_URL    whatever reason. (GitHub's 60-day pause for inactive scheduled
+#                         workflows only applies to public repos; a private one isn't affected.)
 #
 # Set the image tag to your server's Postgres major version (pg16, pg17 or pg18).
 

@@ -1,6 +1,6 @@
 ---
-title: Environment variables
-description: Every setting pgbackup-r2 and pgb read, with defaults.
+title: "Environment variables"
+description: "Every setting pgbackup-r2 and pgb read, with defaults: DATABASE_URL, the R2 and S3 settings, age keys, BACKUP_AT, retention, TIERS and heartbeats."
 ---
 
 Settings come from environment variables, usually a `.env` file that Docker reads. Write values without quotes, and keep comments on their own lines: `docker --env-file` keeps quotes and trailing comments as part of the value. The one exception is `TIERS`, which accepts quotes. An empty value counts as unset.

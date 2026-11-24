@@ -1,6 +1,8 @@
 ---
-title: Retention
-description: Tool-managed or bucket-managed retention, MIN_KEEP, and object locks.
+title: "Backup retention: pruning or S3 lifecycle rules"
+sidebar:
+  label: "Retention"
+description: "Keep Postgres backups as long as you need: prune by RETENTION_DAYS with a MIN_KEEP floor, or leave it to R2 and S3 lifecycle rules and bucket locks."
 ---
 
 Old backups have to go somewhere. pgbackup-r2 can delete them itself, or leave that to your bucket.

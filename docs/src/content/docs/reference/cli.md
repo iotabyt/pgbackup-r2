@@ -1,6 +1,6 @@
 ---
-title: CLI commands
-description: The commands inside the image, pgbackup-r2 backup, drill, restore and the rest.
+title: "CLI commands"
+description: "The pgbackup-r2 command line inside the image: backup, list, prune, restore, drill, verify, decrypt, keygen, detect, doctor and schedule, with options."
 ---
 
 These are the commands of the `pgbackup-r2` program inside the image. `pgb <command>` runs them for you. Without `pgb`, run `docker run … ghcr.io/iotabyt/pgbackup-r2:pg16 <command>`, or `pgbackup-r2 <command>` if you [installed it without Docker](/start/install/#without-docker).

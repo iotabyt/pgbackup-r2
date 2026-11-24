@@ -1,0 +1,64 @@
+# Publish pgbackup-r2 to PyPI with Trusted Publishing (no API token).
+# PyPI side: a (pending) publisher for owner iotabyt, repo pgbackup-r2, workflow pypi.yml, environment pypi.
+#
+# Runs on a published GitHub Release, or by hand: Actions → Publish to PyPI → Run workflow → tag (e.g. v0.3.2).
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish, e.g. v0.3.2"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    env:
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Build
+        run: uv build
+
+      - name: Check the built version matches the tag
+        # Catches publishing a tag whose pyproject still says the old version.
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          ls dist/
+          if ! ls dist/*-"$version"-*.whl >/dev/null 2>&1; then
+            echo "::error title=Version mismatch::tag $TAG but no wheel for $version in dist/"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/project/pgbackup-r2/
+    permissions:
+      id-token: write # required for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

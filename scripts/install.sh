@@ -2,7 +2,7 @@
 # Installs pgb into ~/.local/bin, from the latest release:
 #   curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | sh
 # A specific release:
-#   curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | PGB_VERSION=v0.2.0 sh
+#   curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | PGB_VERSION=v0.4.0 sh
 # It never edits your shell's startup files. If ~/.local/bin isn't on your PATH, it prints
 # the line to add for your shell ($SHELL). pgb itself runs with bash, from any shell.
 set -eu
@@ -29,7 +29,7 @@ if [ -z "$version" ]; then
   fi
   [ -n "$version" ] || die "couldn't find the latest pgb release: GitHub's API didn't answer.
   Check your connection and try again (the API allows 60 requests an hour per address),
-  or name a release: curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | PGB_VERSION=v0.3.0 sh
+  or name a release: curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | PGB_VERSION=v0.4.0 sh
   Releases: https://github.com/$repo/tags"
 fi
 url=${PGB_URL:-https://raw.githubusercontent.com/$repo/$version/scripts/pgb}

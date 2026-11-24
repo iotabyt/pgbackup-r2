@@ -1,6 +1,8 @@
 ---
-title: Keys and security
-description: The public key, the private key, where each lives, and what happens if you lose one.
+title: "Encryption keys and security (age)"
+sidebar:
+  label: "Keys and security"
+description: "How pgbackup-r2 uses age keys: the public key on the server, the private key off it, key files for CI and Kamal, rotating keys, and losing one."
 next:
   link: /guides/monthly-drills/
   label: Monthly drills

@@ -6,7 +6,7 @@
 # PG_MAJOR (from .env, default 16) picks the image, and PGB_NETWORK joins a Docker network.
 # For developers: $env:PGB_IMAGE runs a different image, such as a local build (CONTRIBUTING.md).
 
-$PgbVersion = '0.3.2'
+$PgbVersion = '0.4.0'
 $Repo = 'ghcr.io/iotabyt/pgbackup-r2'
 $ErrorActionPreference = 'Stop'
 

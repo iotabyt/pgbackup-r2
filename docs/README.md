@@ -126,7 +126,7 @@ The site deploys from GitHub on its own: every push to `main` that touches the d
    - Code-only commits then don't rebuild the site. (Docs-only commits already skip the Python CI and image builds, through `paths-ignore` in `ci.yml`.)
    - `CHANGELOG.md` is there because the Changelog page is built from it. Without it, a changelog-only commit wouldn't update the site.
 4. **Domains & Routes → Add → Custom Domain:** `pgbackup-r2.iotabyt.com`. The iotabyt.com zone is in the same account, so Cloudflare creates the DNS record and the certificate.
-5. **Once it's live,** set `"workers_dev": false` in `wrangler.jsonc` and push. The site is then only on its own domain, and the `*.workers.dev` URL stops serving it. `preview_urls` stays on, for preview builds of branches.
+5. **Once it's live,** set `"workers_dev": false` in `wrangler.jsonc` and push. The site is then only on its own domain, and the `*.workers.dev` URL stops serving it. `preview_urls` is off too: preview URLs would be public, indexable copies of the site. Check changes locally with `npm run build && npm run preview`.
 6. **Search and analytics.**
    - **Search Console:** the iotabyt.com Domain property already covers subdomains, so there's nothing to verify. Under **Sitemaps**, submit `https://pgbackup-r2.iotabyt.com/sitemap-index.xml`.
    - **Web Analytics:** in Cloudflare, **Analytics & Logs → Web Analytics → Add a site**, and choose `pgbackup-r2.iotabyt.com`. The CSP already allows its beacon (`static.cloudflareinsights.com` and `cloudflareinsights.com`). After turning it on, check the browser console once for CSP errors.

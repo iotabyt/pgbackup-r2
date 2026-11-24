@@ -40,8 +40,12 @@ RUN pip install /tmp/*.whl && rm /tmp/*.whl \
 USER 10001
 WORKDIR /home/pgbackup
 
-LABEL org.opencontainers.image.source="https://github.com/iotabyt/pgbackup-r2" \
-      org.opencontainers.image.description="Encrypted Postgres backups to R2/S3, with restore drills" \
+# image.source must stay exactly this: `pgb uninstall --all` finds our containers and images by it.
+LABEL org.opencontainers.image.title="pgbackup-r2" \
+      org.opencontainers.image.description="Encrypted Postgres backups to Cloudflare R2 or any S3, with restore drills that prove they work" \
+      org.opencontainers.image.url="https://pgbackup-r2.iotabyt.com" \
+      org.opencontainers.image.documentation="https://pgbackup-r2.iotabyt.com" \
+      org.opencontainers.image.source="https://github.com/iotabyt/pgbackup-r2" \
       org.opencontainers.image.licenses="MIT"
 
 ENTRYPOINT ["pgbackup-r2"]

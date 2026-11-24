@@ -1,6 +1,8 @@
 ---
-title: Troubleshooting
-description: Fixes for common problems, and what every pgb doctor message means.
+title: "Troubleshooting Postgres backups"
+sidebar:
+  label: "Troubleshooting"
+description: "Fixes for common pgbackup-r2 problems: PATH and Docker, database connections, pg_dump version mismatches, drills, restores, and every doctor message."
 ---
 
 Start with `pgb doctor`. It checks each piece in turn and prints a fix under whatever fails. If that doesn't explain it, look below.
@@ -73,8 +75,8 @@ Each line starts with ✓ (fine), ✗ (fails `doctor`, exit 1), ⚠ (worth a loo
 
 | Message | What to do |
 |---|---|
-| `The image is 0.3.0, older than pgb 0.3.2` | Run `pgb update` to pull the image that matches. Until then, newer features are skipped: `pgb drill` drills without its preflight check, with a one-line note. |
-| `pgb 0.3.2 is older than the image (…)` | Re-run the install line to update `pgb` itself. |
+| `The image is 0.3.2, older than pgb 0.4.0` | Run `pgb update` to pull the image that matches. Until then, newer features are skipped: `pgb drill` drills without its preflight check, with a one-line note. |
+| `pgb 0.4.0 is older than the image (…)` | Re-run the install line to update `pgb` itself. |
 | `This bucket has never been drilled.` | Run `pgb drill`. |
 | `Your last successful drill was 41 days ago.` | Run `pgb drill`. More than 35 days triggers this. |
 | `No drill has passed yet (last drill: FAIL, …)` | Fix what the drill reported, then drill again. |

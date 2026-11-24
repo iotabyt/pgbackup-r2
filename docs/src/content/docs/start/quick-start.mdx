@@ -1,6 +1,8 @@
 ---
-title: Quick start
-description: Install pgb, set up one folder, take a backup and prove it restores.
+title: "Quick start: encrypted Postgres backups to R2"
+sidebar:
+  label: "Quick start"
+description: "Install pgb, set up one folder, back up a Postgres database to Cloudflare R2 with pg_dump and age, then prove it restores with a drill. Docker only."
 next:
   link: /guides/r2/
   label: Set up R2
@@ -79,7 +81,7 @@ You need Docker, and nothing else. `pgb` is a small script around `docker run`. 
    ```text
    ✓ Docker is running
    ✓ .env found in /home/ama/acme-backups
-   ✓ pgb and the image are both 0.3.2
+   ✓ pgb and the image are both 0.4.0
    ✓ Settings: everything a backup needs is set (storage: https://<account-id>.r2.cloudflarestorage.com)
    ✓ Database: connected to db/acme, PostgreSQL 17.2
    ✓ Bucket: s3://acme-db-backups/acme/ is writable (wrote and deleted a test file)

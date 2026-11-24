@@ -77,6 +77,8 @@ export default defineConfig({
             { slug: "guides/other-storage" },
             { slug: "guides/vps" },
             { slug: "guides/managed-databases" },
+            { slug: "guides/neon" },
+            { slug: "guides/supabase" },
             { slug: "guides/kamal" },
             { slug: "guides/existing-folders" },
             { slug: "guides/monthly-drills" },

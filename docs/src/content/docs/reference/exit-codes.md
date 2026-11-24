@@ -1,6 +1,6 @@
 ---
-title: Exit codes
-description: What each exit code from pgbackup-r2 and pgb means.
+title: "Exit codes"
+description: "What each exit code from pgbackup-r2 and pgb means, so cron jobs, scripts and CI can tell a failed Postgres backup or drill from a simple typo."
 ---
 
 Scripts, cron and CI can rely on these.

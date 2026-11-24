@@ -1,6 +1,8 @@
 ---
-title: Install pgb
-description: Install the pgb command for bash, zsh, fish or PowerShell, fix PATH, update and uninstall.
+title: "Install pgb on macOS, Linux and Windows"
+sidebar:
+  label: "Install pgb"
+description: "Install pgb, the Docker wrapper for pgbackup-r2, from bash, zsh, fish or PowerShell. Pin a release, fix your PATH, update and uninstall."
 next:
   link: /start/quick-start/
   label: Quick start
@@ -69,14 +71,14 @@ The install lines fetch `pgb` from the latest release on GitHub, never from the 
 <TabItem label="bash, zsh, fish">
 
 ```bash
-curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | PGB_VERSION=v0.2.0 sh
+curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | PGB_VERSION=v0.4.0 sh
 ```
 
 </TabItem>
 <TabItem label="PowerShell">
 
 ```powershell
-$env:PGB_VERSION = 'v0.2.0'; irm https://pgbackup-r2.iotabyt.com/install.ps1 | iex
+$env:PGB_VERSION = 'v0.4.0'; irm https://pgbackup-r2.iotabyt.com/install.ps1 | iex
 ```
 
 </TabItem>
@@ -205,11 +207,15 @@ Older installs added a single `function pgb { ... }` line instead of the marked 
 
 ## Without Docker
 
-If you'd rather not use Docker, install the Python package:
+If you'd rather not use Docker, install the Python package from PyPI:
 
 ```bash
-pip install pgbackup-r2      # or: uv tool install pgbackup-r2
+pip install pgbackup-r2
+# or, with uv:
+uv tool install pgbackup-r2
 ```
+
+To try it without installing anything, `uvx pgbackup-r2 --version` runs it straight from PyPI.
 
 It needs `pg_dump`, `pg_restore` and `psql` from the same Postgres major version as your server, plus `age` (`apt install age`, `brew install age`), all on `PATH`. Set the [environment variables](/reference/environment/) yourself, and run `pgbackup-r2 backup` (and the other [CLI commands](/reference/cli/)) from plain cron:
 

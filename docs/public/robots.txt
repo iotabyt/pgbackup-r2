@@ -1,0 +1,5 @@
+# Everything on this site is public documentation: crawl it all.
+User-agent: *
+Allow: /
+
+Sitemap: https://pgbackup-r2.iotabyt.com/sitemap-index.xml

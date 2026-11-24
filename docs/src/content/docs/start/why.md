@@ -1,6 +1,6 @@
 ---
-title: Why pgbackup-r2
-description: What we believe about backups, what pgbackup-r2 does on purpose, and what it will never do.
+title: "Why pgbackup-r2"
+description: "What pgbackup-r2 believes about Postgres backups, what it does on purpose (age encryption, logical dumps, drills), and what it will never do."
 next:
   link: /start/quick-start/
   label: Quick start

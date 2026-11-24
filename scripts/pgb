@@ -7,7 +7,7 @@
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 # Git Bash on Windows: don't rewrite /out
 
-PGB_VERSION=0.3.2
+PGB_VERSION=0.4.0
 REPO=ghcr.io/iotabyt/pgbackup-r2
 
 die() {

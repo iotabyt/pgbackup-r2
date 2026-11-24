@@ -6,8 +6,18 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
-authors = [{ name = "Frank Owusu Boakye" }]
-keywords = ["postgres", "postgresql", "backup", "r2", "s3", "age", "restore", "drill"]
+authors = [{ name = "Frank Owusu Boakye" }, { name = "Iotabyt", email = "hello@iotabyt.com" }]
+keywords = [
+    "postgres",
+    "postgresql",
+    "backup",
+    "pg_dump",
+    "cloudflare-r2",
+    "s3",
+    "age",
+    "encryption",
+    "restore",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -18,15 +28,19 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Database",
     "Topic :: System :: Archiving :: Backup",
+    "Topic :: System :: Systems Administration",
 ]
 dependencies = ["boto3>=1.36", "rich>=13.7", "rich-argparse>=1.5"]
 
 [project.urls]
-Homepage = "https://github.com/iotabyt/pgbackup-r2"
+Homepage = "https://pgbackup-r2.iotabyt.com"
+Documentation = "https://pgbackup-r2.iotabyt.com"
+Repository = "https://github.com/iotabyt/pgbackup-r2"
+Changelog = "https://pgbackup-r2.iotabyt.com/changelog/"
 Issues = "https://github.com/iotabyt/pgbackup-r2/issues"
-Changelog = "https://github.com/iotabyt/pgbackup-r2/blob/main/CHANGELOG.md"
 
 [project.scripts]
 pgbackup-r2 = "pgbackup_r2.cli:main"

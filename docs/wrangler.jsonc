@@ -8,9 +8,12 @@
 		"not_found_handling": "404-page",
 		"html_handling": "auto-trailing-slash",
 	},
-	// workers.dev stays on until pgbackup-r2.iotabyt.com is live; then set it to false.
+	// Only pgbackup-r2.iotabyt.com serves the site. workers.dev and per-version preview URLs
+	// would be public copies of every page that search engines could index, so both are off.
+	// (Every page also has a canonical link to pgbackup-r2.iotabyt.com.) To preview a change,
+	// build it and run `npm run preview`.
 	"workers_dev": false,
-	"preview_urls": true,
+	"preview_urls": false,
 	"observability": {
 		"logs": { "enabled": true },
 	},

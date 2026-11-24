@@ -1,9 +1,26 @@
 ---
-title: Introduction
-description: Encrypted Postgres backups to R2 or any S3, with restore drills that prove they work.
+title: "Introduction"
+description: "Encrypted Postgres backups to Cloudflare R2 or any S3: pg_dump piped through age, a row-count manifest, and restore drills that prove they work."
 next:
   link: /start/why/
   label: Why pgbackup-r2
+# The page's own title stays "Introduction" (sidebar, Previous/Next links). Search results
+# and link previews get the full one, and og:type "website" as befits a homepage.
+head:
+  - tag: title
+    content: "pgbackup-r2: encrypted Postgres backups to Cloudflare R2, with restore drills"
+  - tag: meta
+    attrs:
+      property: og:title
+      content: "pgbackup-r2: encrypted Postgres backups to Cloudflare R2, with restore drills"
+  - tag: meta
+    attrs:
+      property: og:type
+      content: website
+  - tag: script
+    attrs:
+      type: application/ld+json
+    content: "{\"@context\":\"https://schema.org\",\"@type\":\"SoftwareApplication\",\"name\":\"pgbackup-r2\",\"description\":\"Encrypted Postgres backups to Cloudflare R2 or any S3: pg_dump piped through age, a row-count manifest, and restore drills that prove they work.\",\"applicationCategory\":\"DeveloperApplication\",\"operatingSystem\":\"Linux, macOS, Windows (with Docker)\",\"license\":\"https://opensource.org/licenses/MIT\",\"url\":\"https://pgbackup-r2.iotabyt.com/\",\"codeRepository\":\"https://github.com/iotabyt/pgbackup-r2\",\"offers\":{\"@type\":\"Offer\",\"price\":\"0\",\"priceCurrency\":\"USD\"}}"
 hero:
   title: pgbackup-r2
   tagline: Encrypted Postgres backups to Cloudflare R2 or any S3, with restore drills that prove they work.
