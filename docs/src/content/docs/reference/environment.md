@@ -53,7 +53,7 @@ Settings come from environment variables, usually a `.env` file that Docker read
 
 pgb also passes two variables of its own to the container. Don't set them yourself:
 
-- `PGB_VERSION`, which tells the image it runs under `pgb`, so help and messages say `pgb`
+- `PGB_VERSION`, which tells the image it runs under `pgb`, so help and hints name `pgb` commands (`pgb doctor`). Without it, they name `pgbackup-r2` ones (`pgbackup-r2 doctor`).
 - `PGB_ENV_KEYS`, for `pgb doctor` only: the names in `.env`, never the values, so `doctor` can catch a misspelt setting
 
 ## Output

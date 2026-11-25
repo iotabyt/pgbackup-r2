@@ -12,6 +12,7 @@ import os
 import tempfile
 from collections.abc import Iterator, Sequence
 
+from . import hints
 from .config import Settings
 from .errors import CommandError, ConfigError
 from .util import run
@@ -26,7 +27,8 @@ def check_recipients(recipients: Sequence[str]) -> tuple[str, ...]:
     if not recipients:
         raise ConfigError(
             "AGE_RECIPIENTS is empty, so the backup can't be encrypted and won't run",
-            hint="Make a key pair with `keygen` and put the age1... public key in AGE_RECIPIENTS",
+            hint=f"Make a key pair with {hints.cmd('keygen')} and put the age1... public key "
+            "in AGE_RECIPIENTS",
         )
     for r in recipients:
         if r.upper().startswith("AGE-SECRET-KEY-"):
@@ -40,7 +42,7 @@ def check_recipients(recipients: Sequence[str]) -> tuple[str, ...]:
             raise ConfigError(
                 f"AGE_RECIPIENTS entry starting {r[:8]!r}... isn't an age public key "
                 "(they start with age1)",
-                hint="Copy the AGE_RECIPIENTS=age1... line from `pgb keygen --plain`",
+                hint="Copy the AGE_RECIPIENTS=age1... line from " + hints.cmd("keygen --plain"),
             )
     return tuple(recipients)
 

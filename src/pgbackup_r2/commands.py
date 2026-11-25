@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 
 from botocore.exceptions import BotoCoreError, ClientError
 
-from . import __version__, agecrypt, heartbeat, pg, ui
+from . import __version__, agecrypt, heartbeat, hints, pg, ui
 from .checks import (
     compare_counts,
     count_report,
@@ -26,14 +26,14 @@ from .checks import (
     split_qualified,
     toc_tables,
 )
-from .config import Settings, unknown_settings
+from .config import Settings, endpoint_base, endpoint_path, unknown_settings
 from .errors import CommandError, PgBackupError
 from .pgurl import parse_url, same_database
 from .pgurl import short as short_url
 from .retention import select_expired
 from .scheduling import format_times, next_run, parse_times, sleep_until
 from .stamps import DUMP_SUFFIX, MANIFEST_SUFFIX, make_stamp, manifest_key, parse_stamp
-from .storage import DRILLS_FOLDER, Backup, Store
+from .storage import DRILLS_FOLDER, Backup, BucketError, Store, nested_line, tiers_hint
 from .tiers import Layout, format_tiers, period, rule_for
 from .util import ago, human_size, require_tools, run, sha256_file, workdir
 
@@ -159,11 +159,16 @@ def list_backups(settings: Settings) -> int:
     with ui.step(f"Listing {store.where()}", done=f"Listed {store.where()}"):
         backups = store.list_backups()
     if not backups:
+        nested = store.nested_backups()
+        if nested:
+            ui.warn(f"no backups directly under {store.where()}, but {nested_line(nested)}")
+            ui.out(tiers_hint(nested))
+            return 0
         ui.out("no backups yet")
         return 0
     try:
         last_drill = _last_drill_line(store)
-    except (ClientError, BotoCoreError):
+    except (ClientError, BotoCoreError, BucketError):
         last_drill = None
     now = utcnow()
     width = max(len(human_size(b.size)) for b in backups)
@@ -353,8 +358,8 @@ def drill(settings: Settings, which: str | None) -> int:
     url = settings.require_drill_url()
     if settings.database_url and same_database(url, settings.database_url):
         raise CommandError(
-            f"refusing to drill: DRILL_DATABASE_URL ({short_url(url)}) is the live database",
-            hint="Point DRILL_DATABASE_URL at a scratch database the drill can wipe",
+            f"DRILL_DATABASE_URL and DATABASE_URL point at the same database ({short_url(url)})",
+            hint="A drill wipes its database: point DRILL_DATABASE_URL at a scratch one",
         )
     agecrypt.require_identity(settings)
     require_tools("age", "pg_restore", "psql")
@@ -463,7 +468,7 @@ def _last_drill_line(store: Store) -> str:
     last, _ = store.last_drills()
     age = _drill_age(last, utcnow())
     if last is None or age is None:
-        return "Last drill: never. Run `pgb drill` to prove a backup restores."
+        return f"Last drill: never. Run {hints.cmd('drill')} to prove a backup restores."
     return f"Last drill: {last.get('result', '?')}, {age[0]}"
 
 
@@ -671,24 +676,51 @@ def doctor(env: Mapping[str, str] | None = None) -> int:
         failed += ok is False
         ui.check(ok, label, fix)
 
+    _dotenv_check(env, check)
     missing = [name for name, _ in DOCTOR_REQUIRED if not env.get(name, "").strip()]
     if missing:
+        unset = [n for n in missing if n not in env]
+        empty = [n for n in missing if n in env]
+        said = [
+            f"{', '.join(names)} {verb if len(names) == 1 else 'are ' + verb[3:]}"
+            for names, verb in ((unset, "is not set"), (empty, "is empty"))
+            if names
+        ]
         check(
             False,
-            f"Settings: {', '.join(missing)} {'is' if len(missing) == 1 else 'are'} not set",
+            f"Settings: {'; '.join(said)}",
             "Fill in "
             + "; ".join(f"{n} ({what})" for n, what in DOCTOR_REQUIRED if n in missing)
-            + ". `pgb init` writes a commented .env to start from",
+            + _start_from(),
         )
     try:
         settings = Settings.from_env(env, require_bucket=False)
     except PgBackupError as exc:
         check(False, f"Settings: {exc}", exc.hint)
         return 1
-    if not missing:
+    path = endpoint_path(settings.s3_endpoint)
+    if not missing and not path:
         where = settings.s3_endpoint or "AWS S3"
         check(True, f"Settings: everything a backup needs is set (storage: {where})")
     _typo_checks(env, check)
+    if path:
+        check(
+            False,
+            f"Settings: S3_ENDPOINT has a path ({path})",
+            "Drop the path; the bucket goes in S3_BUCKET: "
+            f"S3_ENDPOINT={endpoint_base(settings.s3_endpoint or '')}",
+        )
+    if (
+        settings.drill_database_url
+        and settings.database_url
+        and same_database(settings.drill_database_url, settings.database_url)
+    ):
+        check(
+            False,
+            "Settings: DRILL_DATABASE_URL and DATABASE_URL point at the same database "
+            f"({short_url(settings.database_url)})",
+            "A drill wipes its database: point DRILL_DATABASE_URL at a scratch one",
+        )
     if not (settings.age_identity or settings.age_identity_file):
         check(
             None,
@@ -711,8 +743,8 @@ def doctor(env: Mapping[str, str] | None = None) -> int:
         else:
             major = num // 10000
             want_raw = env.get("PG_MAJOR", "").strip()
-            want = int(want_raw) if want_raw.isdigit() else _tools_major()
             tools = _tools_major()
+            want = int(want_raw) if want_raw.isdigit() else tools if hints.under_pgb() else None
             if want is not None and major != want:
                 check(
                     False,
@@ -720,18 +752,32 @@ def doctor(env: Mapping[str, str] | None = None) -> int:
                     f"Set PG_MAJOR={major} in .env, so the image (pg{major}) and the drill's "
                     "scratch database match the server",
                 )
-            elif tools is not None and major != tools:
+            elif tools is not None and major != tools and hints.under_pgb():
                 check(
                     False,
                     f"Database: {db} is PostgreSQL {version}, but this image's tools are {tools}",
                     f"Use the pg{major} image (pgb: PG_MAJOR={major} in .env)",
                 )
+            elif tools is not None and major != tools:
+                # Run directly: the tools are whatever pg_dump is first on PATH, in the image
+                # or on this machine.
+                check(
+                    False,
+                    f"Database: {db} is PostgreSQL {version}, but pg_dump here is {tools}",
+                    f"Put Postgres {major}'s client tools first on PATH (Debian/Ubuntu: "
+                    f"postgresql-client-{major}), or use the pg{major} image. "
+                    "Why: https://pgbackup-r2.iotabyt.com/concepts/postgres-versions/",
+                )
             else:
                 check(True, f"Database: connected to {db}, PostgreSQL {version}")
 
-    # The bucket: put a tiny object under the prefix, then delete it again.
-    if settings.s3_bucket:
+    # The bucket: list the prefix, put a tiny object under it, then delete it again.
+    # A path in S3_ENDPOINT has already failed above, and every call would fail the same way.
+    bucket_ok = bool(settings.s3_bucket) and not path
+    if bucket_ok:
         store = Store(settings)
+        bucket_ok = _list_check(store, check)
+    if bucket_ok:
         name = f".pgbackup-r2-doctor-{os.urandom(4).hex()}"
         key = f"{store.prefix}/{name}" if store.prefix else name
         try:
@@ -761,8 +807,8 @@ def doctor(env: Mapping[str, str] | None = None) -> int:
                         f"Bucket: {store.where()} is writable (wrote and deleted a test file)",
                     )
 
-    if settings.s3_bucket:
-        _layout_checks(settings, Store(settings), check)
+    if bucket_ok:
+        _layout_checks(settings, store, check)
 
     # The keys: anything encrypted to AGE_RECIPIENTS must open with AGE_IDENTITY.
     if settings.age_recipients:
@@ -806,6 +852,63 @@ def _check_keys(settings: Settings, check) -> None:
     check(False, f"Keys: AGE_IDENTITY can't open backups encrypted to AGE_RECIPIENTS{detail}", fix)
 
 
+def _start_from() -> str:
+    if hints.under_pgb():
+        return f". {hints.cmd('init')} writes a commented .env to start from"
+    return ". Every setting: https://pgbackup-r2.iotabyt.com/reference/environment/"
+
+
+def _detect_tail() -> str:
+    if hints.under_pgb():
+        return f"  ({hints.cmd('init --detect')} writes it into .env)"
+    return "  (quotes included)"
+
+
+_DOTENV_NAME = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
+
+
+def _dotenv_check(env: Mapping[str, str], check, path: str = ".env") -> None:
+    """Without pgb, a .env in this folder does nothing unless the shell loaded it."""
+    if hints.under_pgb() or not os.path.isfile(path):
+        return
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            names = [m.group(1) for line in f if (m := _DOTENV_NAME.match(line))]
+    except OSError:
+        return
+    absent = [n for n in dict.fromkeys(names) if n not in env]
+    load = "set -a; source .env; set +a"
+    if absent:
+        shown = ", ".join(absent[:4]) + (f" and {len(absent) - 4} more" if len(absent) > 4 else "")
+        check(
+            ui.WARN,
+            f".env: pgbackup-r2 doesn't read .env, and {shown} from it "
+            f"{'isn' if len(absent) == 1 else 'aren'}'t in the environment.",
+            f"Load it into this shell first: {load}",
+        )
+    else:
+        check(
+            None,
+            f".env: pgbackup-r2 doesn't read .env itself; its settings are in the environment "
+            f"already ({load} does that)",
+        )
+
+
+def _list_check(store: Store, check) -> bool:
+    """List the prefix: what list, restore and drill do first. False if that fails."""
+    try:
+        backups = store.list_backups()
+    except BucketError as exc:
+        check(False, f"Bucket: {exc}", exc.hint)
+        return False
+    except (ClientError, BotoCoreError) as exc:
+        check(False, f"Bucket: can't list {store.where()}: {_short(exc)}", _s3_hint(exc))
+        return False
+    n = len(backups)
+    check(True, f"Bucket: listed {store.where()}: {n} backup{'s' if n != 1 else ''}")
+    return True
+
+
 def _short(exc: BaseException) -> str:
     text = " ".join(str(exc).split())
     return text if len(text) <= 200 else text[:197] + "..."
@@ -828,19 +931,27 @@ def _layout_checks(settings: Settings, store: Store, check) -> None:
         rules = store.lifecycle()
         if not settings.tiers:
             layout = store.detect_layout()
-            foreign = store.folder_stats(None)[1]
+            root, foreign = store.folder_stats(None)
             if foreign:
                 check(
                     None,
                     f"{foreign} other file{'s' if foreign != 1 else ''} under "
                     f"{store.where()} not made by pgbackup-r2 (left alone)",
                 )
-            if layout.suggestion:
+            nested = [(store.folder_prefix(f.name), f.backups) for f in layout.folders if f.backups]
+            if not root and nested:
+                # list, restore and drill look only at the prefix itself without TIERS.
+                check(
+                    ui.WARN,
+                    f"TIERS isn't set and there are no backups directly under {store.where()}, "
+                    f"but {nested_line(nested)}.",
+                    tiers_hint(nested) + ".",
+                )
+            elif layout.suggestion:
                 check(
                     None,
                     " ".join(layout.describe()),
-                    f"Suggested: {'   '.join(layout.suggested_lines())}  (`pgb init --detect` "
-                    "writes it into .env)",
+                    f"Suggested: {'   '.join(layout.suggested_lines())}" + _detect_tail(),
                 )
             return
         for tier in settings.tiers:
@@ -872,7 +983,7 @@ def _layout_checks(settings: Settings, store: Store, check) -> None:
                 "Couldn't read the bucket's lifecycle rules (the token may not be allowed to); "
                 "check them in your storage dashboard",
             )
-    except (ClientError, BotoCoreError):
+    except (ClientError, BotoCoreError, BucketError):
         return  # the bucket check above has already said what's wrong
 
 
@@ -917,20 +1028,20 @@ def _drill_check(store: Store, check) -> None:
     """When a backup last restored for real. A warning, never a failure."""
     try:
         last, last_pass = store.last_drills()
-    except (ClientError, BotoCoreError):
+    except (ClientError, BotoCoreError, BucketError):
         return
     now = utcnow()
     passed = _drill_age(last_pass, now)
     if passed is None:
         if last is None:
-            check(ui.WARN, "This bucket has never been drilled.", "Run `pgb drill`.")
+            check(ui.WARN, "This bucket has never been drilled.", f"Run {hints.cmd('drill')}.")
         else:
             failed = _drill_age(last, now)
             when = f", {failed[0]}" if failed else ""
             check(
                 ui.WARN,
                 f"No drill has passed yet (last drill: {last.get('result', '?')}{when}).",
-                "Fix what the drill reported, then run `pgb drill` again.",
+                f"Fix what the drill reported, then run {hints.cmd('drill')} again.",
             )
         return
     text, days = passed
@@ -938,7 +1049,7 @@ def _drill_check(store: Store, check) -> None:
         check(
             ui.WARN,
             f"Your last successful drill was {text.removesuffix(' ago')} ago.",
-            "Run `pgb drill`.",
+            f"Run {hints.cmd('drill')}.",
         )
     else:
         check(True, f"Last successful drill: {text} ({last_pass.get('backup', '?')})")
@@ -947,7 +1058,7 @@ def _drill_check(store: Store, check) -> None:
         check(
             ui.WARN,
             f"The most recent drill failed{f' ({failed[0]})' if failed else ''}.",
-            "Run `pgb drill` to see why.",
+            f"Run {hints.cmd('drill')} to see why.",
         )
 
 

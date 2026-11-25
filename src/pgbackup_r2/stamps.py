@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 
+from . import hints
 from .errors import CommandError
 
 STAMP_FORMAT = "%Y-%m-%dT%H%M%SZ"
@@ -40,7 +41,7 @@ def normalize_stamp(text: str) -> str:
         raise CommandError(
             f"{text!r} isn't a backup stamp: expected 'latest' or something like "
             "2026-11-18T020000Z",
-            hint="Run `pgb list` to see the backups and their stamps",
+            hint=f"Run {hints.cmd('list')} to see the backups and their stamps",
         )
     return name
 

@@ -61,11 +61,14 @@ Each line starts with ✓ (fine), ✗ (fails `doctor`, exit 1), ⚠ (worth a loo
 | `Couldn't run the image …` | Docker couldn't pull or start the image. Check `PG_MAJOR` in `.env` (16, 17 or 18), and that Docker can reach `ghcr.io`. |
 | `Image 0.1.1 has no doctor checks of its own` | The image is too old for `doctor`. Run `pgb update`. |
 | `No .env in <folder>` | Run `pgb init`, or `cd` to the folder that has your `.env`. |
-| `Settings: X, Y are not set` | Fill them in. The fix line says what each one is. |
+| `Settings: X, Y are not set` | Fill them in. The fix line says what each one is. `… is empty` means the name is there with nothing after the `=`. |
+| `Settings: S3_ENDPOINT has a path (/…)` | The endpoint is just `https://<account-id>.r2.cloudflarestorage.com`. Drop the path; the bucket goes in `S3_BUCKET`, and a folder in `S3_PREFIX`. |
+| `Settings: DRILL_DATABASE_URL and DATABASE_URL point at the same database (…)` | A drill wipes its database, so it must never be the live one. Point `DRILL_DATABASE_URL` at a scratch database. With `pgb`, leave it out: `pgb drill` starts its own. |
 | `Settings: TIERS: …` (or another setting) | A setting has a bad value. The fix shows the right form. |
 | `Database: can't connect to …` | Read the error after the colon. A host name that can't be found gets an explanation, with the `PGB_NETWORK` and `localhost` fixes. A refused `localhost` connection outside `pgb` gets the `host.docker.internal` hint. Bad passwords, and databases that don't exist, show Postgres's own words. |
 | `Database: … is PostgreSQL 17.2, but PG_MAJOR is 16` | Set `PG_MAJOR` to the server's major version. |
 | `Database: … but this image's tools are 16` | You ran the image directly with the wrong tag. Use the tag for your server's version. |
+| `Bucket: can't list …: … says NoSuchBucket` (or `NoSuchKey`) | There's no bucket by that name at that endpoint. Check `S3_BUCKET` is the bucket's exact name, and that `S3_ENDPOINT` is the account that has it, with no path. |
 | `Bucket: can't write to …` | The fix depends on the error: check `S3_BUCKET` and the endpoint (`NoSuchBucket`), the keys (`InvalidAccessKeyId`, `SignatureDoesNotMatch`), or the token's permission (`AccessDenied`: it needs Object Read & Write). An unreachable endpoint means `S3_ENDPOINT` is wrong. |
 | `Bucket: wrote to … but can't delete` | The token can write but not delete, so `prune` would fail. Give it Object Read & Write, and remove the test file it names by hand. |
 | `Keys: AGE_RECIPIENTS …` | `AGE_RECIPIENTS` contains a private key, or something that isn't an `age1…` key. |
@@ -75,8 +78,10 @@ Each line starts with ✓ (fine), ✗ (fails `doctor`, exit 1), ⚠ (worth a loo
 
 | Message | What to do |
 |---|---|
-| `The image is 0.3.2, older than pgb 0.4.0` | Run `pgb update` to pull the image that matches. Until then, newer features are skipped: `pgb drill` drills without its preflight check, with a one-line note. |
-| `pgb 0.4.0 is older than the image (…)` | Re-run the install line to update `pgb` itself. |
+| `The image is 0.3.2, older than pgb 0.4.2` | Run `pgb update` to pull the image that matches. Until then, newer features are skipped: `pgb drill` drills without its preflight check, with a one-line note. |
+| `pgb 0.4.2 is older than the image (…)` | Re-run the install line to update `pgb` itself. |
+| `TIERS isn't set and there are no backups directly under …, but found backups in …` | Your backups live in tier folders, but without `TIERS`, `list`, `restore` and `drill` only look at the prefix itself. Set `TIERS` as the fix line shows, quotes included. |
+| `.env: pgbackup-r2 doesn't read .env, and X, Y from it aren't in the environment.` | Without `pgb`, nothing reads `.env` for you. Load it into the shell first: `set -a; source .env; set +a`. |
 | `This bucket has never been drilled.` | Run `pgb drill`. |
 | `Your last successful drill was 41 days ago.` | Run `pgb drill`. More than 35 days triggers this. |
 | `No drill has passed yet (last drill: FAIL, …)` | Fix what the drill reported, then drill again. |

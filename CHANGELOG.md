@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+## 0.4.2 (2026-11-25)
+
+First-run fixes for running the CLI directly, from `pip` or `uvx`. I went through the PyPI page from scratch, and these are the things that tripped me up.
+
+- **Hints name the command you ran.** Run `pgbackup-r2` directly and a hint says "Run `pgbackup-r2 doctor`", not `pgb doctor`. Under `pgb`, hints still say `pgb`. Hints for `pgb`-only commands (`init`, `init --detect`) now have a CLI version.
+- **Bucket mistakes say what's wrong.**
+  - "S3_BUCKET is empty" (the name is there with nothing after the `=`) is now told apart from "S3_BUCKET is not set". Both fail before any S3 call.
+  - A bucket with a folder in it (`S3_BUCKET=my-backups/app`) says the folder goes in `S3_PREFIX`.
+  - `NoSuchBucket` or `NoSuchKey` from listing the bucket used to come out as a raw botocore error. Now it names `S3_BUCKET` and `S3_ENDPOINT` as the things to check, and says so directly when `S3_ENDPOINT` has a path.
+- **Backups in tier folders, with `TIERS` unset.** When there's nothing directly under the prefix but there are backups in subfolders, `list`, `restore`, `drill` and `doctor` say where they found them: `found backups in labpadi/daily/ and labpadi/monthly/`, with a `TIERS="daily=daily/ monthly=monthly/"` to copy, quotes included.
+- **`doctor` checks more:**
+  - It lists the bucket and prefix, which is what `list`, `restore` and `drill` do first, before the write-and-delete test. If listing fails, it stops there.
+  - `S3_ENDPOINT` with a path (`https://<account-id>.r2.cloudflarestorage.com/my-backups`) fails: drop the path; the bucket goes in `S3_BUCKET`.
+  - `DATABASE_URL` and `DRILL_DATABASE_URL` on the same database fails, naming both.
+  - Without `pgb`, a `.env` in the current folder that isn't loaded gets a warning. pgbackup-r2 never reads `.env` itself, and now the PyPI page, the install docs and `--help` all say so: `set -a; source .env; set +a`.
+- **`drill` refuses the live database in plainer words:** "DRILL_DATABASE_URL and DATABASE_URL point at the same database (localhost/postgres)".
+- **Two bugs found on the way:**
+  - `backup` to a bucket that doesn't exist crashed with a traceback and "this is a bug". Now it's one line, like `list`.
+  - Without `pgb`, `doctor` blamed `PG_MAJOR` for a version mismatch even when `PG_MAJOR` wasn't set. Now it says the server is 18 but `pg_dump` here is 19, and how to get matching client tools.
+- **`--help` for `drill`, `restore`, `verify` and `decrypt`** lists what each one needs when there's no `pgb` to provide it: the scratch database (`DRILL_DATABASE_URL`) or the restore target, `AGE_IDENTITY` or `AGE_IDENTITY_FILE`, and the tools on `PATH`.
+- **Docs:**
+  - The PyPI page says up front that `pgbackup-r2` is the CLI and `pgb` is the Docker wrapper.
+  - It warns that bucket lifecycle rules don't respect `MIN_KEEP`: if backups stop, they eventually delete everything.
+  - It has an alias tip.
+  - The Postgres versions page notes that a backup from Postgres 18's `pg_dump` restores cleanly with `pg_restore` 19 into a Postgres 19 server. I tested it.
+
+### Upgrading from 0.4.1
+
+Nothing to change. Re-run the install line, then `pgb update` in each backup folder. Or `pip install -U pgbackup-r2`. With `pgb`, `pgb doctor` has one new line, `Bucket: listed …`, and can show the new checks above.
+
 ## 0.4.1 (2026-11-24)
 
 - **PyPI has its own page now.** It leads with `pip install` and `uv tool install`, what you need on your `PATH`, the minimal config and the commands to run. The GitHub README still leads with Docker and `pgb`.

@@ -81,9 +81,10 @@ You need Docker, and nothing else. `pgb` is a small script around `docker run`. 
    ```text
    ✓ Docker is running
    ✓ .env found in /home/ama/acme-backups
-   ✓ pgb and the image are both 0.4.0
+   ✓ pgb and the image are both 0.4.2
    ✓ Settings: everything a backup needs is set (storage: https://<account-id>.r2.cloudflarestorage.com)
    ✓ Database: connected to db/acme, PostgreSQL 17.2
+   ✓ Bucket: listed s3://acme-db-backups/acme/: 0 backups
    ✓ Bucket: s3://acme-db-backups/acme/ is writable (wrote and deleted a test file)
    ✓ Keys: AGE_IDENTITY opens what is encrypted to AGE_RECIPIENTS
    ⚠ This bucket has never been drilled.

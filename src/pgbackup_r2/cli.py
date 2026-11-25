@@ -16,7 +16,7 @@ from botocore.exceptions import (
 )
 from rich_argparse import RawDescriptionRichHelpFormatter
 
-from . import __version__, commands, heartbeat, pg, ui
+from . import __version__, commands, heartbeat, hints, pg, ui
 from .config import DEFAULTS, Settings
 from .errors import CommandError, PgBackupError
 
@@ -40,8 +40,8 @@ class _HelpParser(argparse.ArgumentParser):
 
 
 def _prog() -> str:
-    """'pgb' when run through the pgb wrapper (it sets PGB_VERSION), else 'pgbackup-r2'."""
-    return "pgb" if os.environ.get("PGB_VERSION") else "pgbackup-r2"
+    """'pgb' when run through the pgb wrapper, else 'pgbackup-r2'."""
+    return hints.prog()
 
 
 def _examples(*lines: tuple[str, str]) -> str:
@@ -50,6 +50,16 @@ def _examples(*lines: tuple[str, str]) -> str:
         f"  {cmd:<{width}}{('# ' + note) if note else ''}".rstrip() for cmd, note in lines
     )
     return "Examples:\n" + body
+
+
+KEY_NEED = ("AGE_IDENTITY", "the private key (AGE-SECRET-KEY-1...), or AGE_IDENTITY_FILE: a file")
+BUCKET_NEED = ("S3_BUCKET", "and the rest of the bucket settings, as for backup")
+
+
+def _needs(*lines: tuple[str, str]) -> str:
+    """What a command needs set, for its help: the part pgb otherwise handles for you."""
+    width = max(len(name) for name, _ in lines) + 2
+    return "\n\nNeeds:\n" + "\n".join(f"  {name:<{width}}{what}" for name, what in lines)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -70,7 +80,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = _HelpParser(
         prog=prog,
         description="Encrypted Postgres backups to R2 or any S3, with restore drills that prove "
-        "they work.\nSettings come from environment variables, usually a .env file.",
+        "they work.\nSettings come from environment variables; it doesn't read .env itself.\n"
+        "pgb hands .env to Docker. Without pgb, load it first: set -a; source .env; set +a",
         epilog=_examples(
             (f"{prog} doctor", "check everything is set up"),
             (f"{prog} backup", "back up now"),
@@ -85,12 +96,14 @@ def build_parser() -> argparse.ArgumentParser:
         dest="command", metavar="COMMAND", required=True, parser_class=_HelpParser
     )
 
-    def add(name: str, summary: str, *examples: tuple[str, str]) -> argparse.ArgumentParser:
+    def add(
+        name: str, summary: str, *examples: tuple[str, str], needs: str = ""
+    ) -> argparse.ArgumentParser:
         return sub.add_parser(
             name,
             parents=[common],
             help=(first := summary.split(". ")[0].rstrip("."))[0].lower() + first[1:],
-            description=summary,
+            description=summary + needs,
             epilog=_examples(*((f"{prog} {cmd}", note) for cmd, note in examples)),
             formatter_class=fmt,
         )
@@ -125,6 +138,12 @@ def build_parser() -> argparse.ArgumentParser:
         ("restore", "the latest backup"),
         ("restore 2026-11-18T020000Z", "a specific one"),
         ("restore latest --to-production", "over the live database; asks you to confirm"),
+        needs=_needs(
+            ("RESTORE_DATABASE_URL", "the database to restore into (or --target URL)"),
+            KEY_NEED,
+            BUCKET_NEED,
+            ("On PATH", "age and pg_restore (as new as the backup's pg_dump, or newer)"),
+        ),
     )
     p.add_argument(
         "stamp",
@@ -151,6 +170,14 @@ def build_parser() -> argparse.ArgumentParser:
         ("drill", "the latest backup"),
         ("drill 2026-11-18T020000Z", "a specific one"),
         ("drill monthly/2026-11-01T020000Z", "with TIERS: one in a given tier"),
+        needs=_needs(
+            ("DRILL_DATABASE_URL", "a scratch database the drill may wipe, never DATABASE_URL's"),
+            KEY_NEED,
+            BUCKET_NEED,
+            ("On PATH", "age, pg_restore and psql (as new as the backup's pg_dump, or newer)"),
+        )
+        + "\n\npgb drill starts a throwaway Postgres for DRILL_DATABASE_URL; without pgb, bring "
+        "your own.",
     )
     p.add_argument(
         "stamp",
@@ -196,6 +223,11 @@ def build_parser() -> argparse.ArgumentParser:
         "Write a backup out as a plain pg_dump file.",
         ("decrypt latest --out /out/backup.dump", ""),
         ("decrypt --file /out/x.dump.age --out /out/x.dump", "a file you downloaded"),
+        needs=_needs(
+            KEY_NEED,
+            ("S3_BUCKET", "and the rest of the bucket settings (not with --file)"),
+            ("On PATH", "age"),
+        ),
     )
     p.add_argument(
         "stamp",
@@ -214,6 +246,11 @@ def build_parser() -> argparse.ArgumentParser:
         ("verify", "the latest backup"),
         ("verify 2026-11-18T020000Z", "a specific one"),
         ("verify --file /out/2026-11-18T020000Z.dump.age", "a file you downloaded"),
+        needs=_needs(
+            KEY_NEED,
+            ("S3_BUCKET", "and the rest of the bucket settings (not with --file)"),
+            ("On PATH", "age and pg_restore"),
+        ),
     )
     p.add_argument(
         "stamp",
@@ -286,15 +323,12 @@ def _one_line(exc: BaseException) -> str:
     return " ".join(str(exc).split()) or type(exc).__name__
 
 
-DOCTOR_HINT = "Run `pgb doctor`: it checks the settings, the database, the bucket and the keys"
-
-
 def _hint(exc: BaseException) -> str | None:
     """A short fix for the error, if we know one."""
     if isinstance(exc, PgBackupError):
         if exc.hint is None and isinstance(exc, CommandError):
-            return pg.connection_hint(str(exc), os.environ.get("DATABASE_URL")) or DOCTOR_HINT
-        return exc.hint or DOCTOR_HINT
+            return pg.connection_hint(str(exc), os.environ.get("DATABASE_URL")) or hints.doctor()
+        return exc.hint or hints.doctor()
     if isinstance(exc, NoCredentialsError):
         return "Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in your .env"
     if isinstance(exc, EndpointConnectionError):
@@ -309,7 +343,7 @@ def _hint(exc: BaseException) -> str | None:
                 "Object Read & Write on this bucket"
             )
     # Every error ends with something to do next.
-    return DOCTOR_HINT
+    return hints.doctor()
 
 
 def _on_sigterm(signum, frame) -> None:

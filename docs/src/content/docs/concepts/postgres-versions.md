@@ -49,3 +49,5 @@ pgbackup-r2 recognises both errors and adds a hint, but the fix is always the sa
 5. Take a backup and run a drill.
 
 Backups made before the upgrade come from the old major version, and they restore fine with the new tools into a new server. A dump from a newer major version never restores into an older server.
+
+This has been tested: a backup taken with Postgres 18's `pg_dump` (the `pg18` image) restores cleanly with `pg_restore` 19 into a Postgres 19 scratch server.

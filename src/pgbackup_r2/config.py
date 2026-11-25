@@ -1,4 +1,6 @@
-"""Settings come from environment variables only (a .env file read by Docker, usually)."""
+"""Settings come from environment variables only. pgbackup-r2 never reads a .env file itself:
+pgb hands .env to Docker, and without pgb you load it into the shell first
+(set -a; source .env; set +a)."""
 
 from __future__ import annotations
 
@@ -6,6 +8,7 @@ import difflib
 import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 from .errors import ConfigError
 from .pgurl import parse_url
@@ -173,8 +176,8 @@ class Settings:
         env = os.environ if env is None else env
 
         bucket = _get(env, "S3_BUCKET")
-        if require_bucket and not bucket:
-            raise ConfigError("S3_BUCKET is not set", hint="Put the bucket name in your .env")
+        if require_bucket:
+            check_bucket(bucket, present="S3_BUCKET" in env)
 
         identity = _get(env, "AGE_IDENTITY")
         identity_file = _get(env, "AGE_IDENTITY_FILE")
@@ -246,6 +249,41 @@ class Settings:
         return url
 
     def require_bucket(self) -> str:
-        if not self.s3_bucket:
-            raise ConfigError("S3_BUCKET is not set", hint="Put the bucket name in your .env")
-        return self.s3_bucket
+        return check_bucket(self.s3_bucket, present=False)
+
+
+def check_bucket(bucket: str | None, *, present: bool) -> str:
+    """The bucket name, checked before any S3 call. `present`: S3_BUCKET exists but is blank."""
+    if not bucket:
+        if present:
+            raise ConfigError(
+                "S3_BUCKET is empty",
+                hint="Set S3_BUCKET to the bucket's name, e.g. S3_BUCKET=my-backups",
+            )
+        raise ConfigError(
+            "S3_BUCKET is not set",
+            hint="Set S3_BUCKET to the bucket's name, e.g. S3_BUCKET=my-backups",
+        )
+    if "/" in bucket:
+        name, _, folder = bucket.partition("/")
+        raise ConfigError(
+            f"S3_BUCKET has a folder in it ({bucket})",
+            hint=f"S3_BUCKET is just the name: S3_BUCKET={name}, and the folder goes in "
+            f"S3_PREFIX={folder.strip('/')}",
+        )
+    return bucket
+
+
+def endpoint_path(endpoint: str | None) -> str | None:
+    """The path in S3_ENDPOINT, if it has one (https://x.r2.cloudflarestorage.com/backups ->
+    /backups). An endpoint is just the scheme and host: the bucket goes in S3_BUCKET."""
+    if not endpoint:
+        return None
+    path = urlsplit(endpoint).path
+    return path if path.strip("/") else None
+
+
+def endpoint_base(endpoint: str) -> str:
+    """S3_ENDPOINT without its path."""
+    parts = urlsplit(endpoint)
+    return f"{parts.scheme}://{parts.netloc}" if parts.netloc else endpoint

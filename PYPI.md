@@ -4,6 +4,8 @@
 
 Encrypted Postgres backups to Cloudflare R2 or any S3, with restore drills that prove they work.
 
+This package is the CLI itself: the command is `pgbackup-r2`. `pgb` is a separate wrapper that runs the same CLI in Docker (see "Prefer Docker?" below). Whatever the docs show as `pgb doctor` is `pgbackup-r2 doctor` here.
+
 ## Install
 
 ```bash
@@ -36,7 +38,13 @@ AWS_SECRET_ACCESS_KEY=...
 AGE_RECIPIENTS=age1...       # the PUBLIC key from `pgbackup-r2 keygen`
 ```
 
-Keep them in a `.env` file that only you can read, and load it into your shell with `set -a; . ./.env; set +a`. Every setting, with its default, is in the [environment reference](https://pgbackup-r2.iotabyt.com/reference/environment/).
+**pgbackup-r2 doesn't read `.env` files.** Keep the settings in a `.env` that only you can read, and load it into your shell before running anything:
+
+```bash
+set -a; source .env; set +a
+```
+
+Quote values with spaces, such as `TIERS="daily=daily/ monthly=monthly/"`. If a `.env` in the current folder isn't loaded, `pgbackup-r2 doctor` tells you. Every setting, with its default, is in the [environment reference](https://pgbackup-r2.iotabyt.com/reference/environment/).
 
 ## Use it
 
@@ -48,7 +56,9 @@ pgbackup-r2 list       # what's in the bucket, and when the last drill ran
 pgbackup-r2 drill      # restore into a scratch database and check every table's row count
 ```
 
-Restoring and drilling need the **private** key, in `AGE_IDENTITY`. A drill also needs a scratch database it can wipe, in `DRILL_DATABASE_URL`.
+Restoring and drilling need the **private** key, in `AGE_IDENTITY` (or a file holding it, in `AGE_IDENTITY_FILE`). A drill also needs a scratch database it can wipe, in `DRILL_DATABASE_URL`: never the one in `DATABASE_URL`. `pgbackup-r2 <command> --help` lists what each command needs.
+
+Tired of typing it? `alias pgbr='pgbackup-r2'`.
 
 Exit codes are cron- and CI-friendly: 0 for success, and 1 when anything fails, including a drill that finds a problem. Details are in [Exit codes](https://pgbackup-r2.iotabyt.com/reference/exit-codes/). `pgbackup-r2 schedule` can also stay running and back up every day at `BACKUP_AT`, with no cron at all.
 
@@ -57,12 +67,12 @@ Exit codes are cron- and CI-friendly: 0 for success, and 1 when anything fails, 
 - **No plain dump on disk:** `pg_dump` streams straight into age, and only the encrypted file is written.
 - **The server only needs the public key,** so a stolen server can't open its own backups.
 - **Every backup is checked:** a SHA-256 checksum, and an encrypted manifest of every table's row count, which drills restore against.
-- **Retention with a floor:** backups older than `RETENTION_DAYS` are pruned, but never the newest `MIN_KEEP`. Or you can leave it to your bucket's lifecycle rules.
+- **Retention with a floor:** backups older than `RETENTION_DAYS` are pruned, but never the newest `MIN_KEEP`. Or you can leave it to your bucket's lifecycle rules, but they know nothing about `MIN_KEEP`: if backups stop, a lifecycle rule eventually deletes every last one.
 - **Heartbeats:** it pings `HEARTBEAT_URL` after every good backup or drill, and `HEARTBEAT_FAIL_URL` when one fails.
 
 ## Prefer Docker?
 
-The Docker route needs nothing but Docker. `pgb` wraps the image, runs drills against a throwaway Postgres for you, and schedules nightly backups. Install it with `curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | sh`, then follow the [quick start](https://pgbackup-r2.iotabyt.com/start/quick-start/).
+The Docker route needs nothing but Docker. `pgb` is a small wrapper script around the Docker image, which has this same CLI inside: it reads `.env` for you, runs drills against a throwaway Postgres for you, and schedules nightly backups. Install it with `curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | sh`, then follow the [quick start](https://pgbackup-r2.iotabyt.com/start/quick-start/).
 
 ## Links
 

@@ -213,7 +213,7 @@ def test_list_resolve_and_latest_across_tiers(s3, capsys):
         "monthly  2026-10-01T020000Z  26 B  monthly/2026-10-01T020000Z.dump.age",
         "daily    2026-11-18T020000Z  26 B  daily/2026-11-18T020000Z.dump.age",
         "monthly  2026-11-18T020000Z  26 B  monthly/2026-11-18T020000Z.dump.age",
-        "Last drill: never. Run `pgb drill` to prove a backup restores.",
+        "Last drill: never. Run `pgbackup-r2 drill` to prove a backup restores.",
     ]
 
 
@@ -406,12 +406,12 @@ def test_doctor_drill_ages(s3, monkeypatch):
     monkeypatch.setattr(commands, "utcnow", lambda: at("2026-11-30T12:00:00"))
 
     assert drill_lines(store) == [
-        ("warn", "This bucket has never been drilled.", "Run `pgb drill`.")
+        ("warn", "This bucket has never been drilled.", "Run `pgbackup-r2 drill`.")
     ]
 
     put_drill(store, "2026-10-20T12:00:00", "PASS")  # 41 days before
     assert drill_lines(store) == [
-        ("warn", "Your last successful drill was 41 days ago.", "Run `pgb drill`.")
+        ("warn", "Your last successful drill was 41 days ago.", "Run `pgbackup-r2 drill`.")
     ]
 
     put_drill(store, "2026-11-18T12:00:00", "PASS")  # 12 days before
@@ -533,14 +533,18 @@ def test_every_config_error_has_a_hint():
     assert missing == []
 
 
-def test_errors_without_their_own_hint_point_at_doctor():
+def test_errors_without_their_own_hint_point_at_doctor(monkeypatch):
     from botocore.exceptions import EndpointConnectionError
 
-    from pgbackup_r2.cli import DOCTOR_HINT, _hint
+    from pgbackup_r2 import hints
+    from pgbackup_r2.cli import _hint
     from pgbackup_r2.errors import CommandError
 
-    assert _hint(CommandError("pg_dump failed (exit 1): something")) == DOCTOR_HINT
-    assert _hint(RuntimeError("anything")) == DOCTOR_HINT
+    monkeypatch.delenv("PGB_VERSION", raising=False)
+    assert _hint(CommandError("pg_dump failed (exit 1): something")) == hints.doctor()
+    assert _hint(RuntimeError("anything")).startswith("Run `pgbackup-r2 doctor`: it checks")
+    monkeypatch.setenv("PGB_VERSION", "0.4.2")  # what the pgb wrappers pass
+    assert _hint(RuntimeError("anything")).startswith("Run `pgb doctor`: it checks")
     assert "S3_ENDPOINT" in _hint(EndpointConnectionError(endpoint_url="http://x"))
     assert _hint(CommandError("x", hint="Do this")) == "Do this"
 
@@ -559,7 +563,7 @@ def test_drill_preflight_checks_key_bucket_and_backup(s3, monkeypatch, capsys):
     assert main(["drill", "--preflight", "--plain"]) == 1
     err = capsys.readouterr().err
     assert "no backups found under s3://tiers-test/" in err
-    assert "pgb backup" in err  # the next thing to run
+    assert "`pgbackup-r2 backup`" in err  # the next thing to run
 
     run_backup(Store(settings()), s3, at("2026-11-18T02:00:00"))
     assert main(["drill", "--preflight", "--plain", "2026-01-01T000000Z"]) == 1
