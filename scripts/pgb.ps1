@@ -6,7 +6,7 @@
 # PG_MAJOR (from .env, default 16) picks the image, and PGB_NETWORK joins a Docker network.
 # For developers: $env:PGB_IMAGE runs a different image, such as a local build (CONTRIBUTING.md).
 
-$PgbVersion = '0.4.2'
+$PgbVersion = '0.4.3'
 $Repo = 'ghcr.io/iotabyt/pgbackup-r2'
 $ErrorActionPreference = 'Stop'
 
@@ -456,7 +456,7 @@ function Invoke-Doctor {
     $iv = Get-ImageVersion
     if (-not $iv) {
         "$([char]0x2717) Couldn't run the image $image"
-        '    Check the PG_MAJOR in .env, and that Docker can pull from ghcr.io'
+        '    Check the PG_MAJOR in .env (16, 17, 18 or 19), and that Docker can pull from ghcr.io'
         exit 1
     } elseif ($iv -eq $PgbVersion) {
         "$([char]0x2713) pgb and the image are both $PgbVersion"

@@ -10,10 +10,17 @@ from __future__ import annotations
 import os
 
 WRAPPER_ENV = "PGB_VERSION"
+# Set in the Docker image (Dockerfile), e.g. pg19: the tools came with the image, not from
+# this machine's PATH. Also internal.
+IMAGE_ENV = "PGBACKUP_R2_IMAGE"
 
 
 def under_pgb() -> bool:
     return bool(os.environ.get(WRAPPER_ENV))
+
+
+def in_image() -> bool:
+    return bool(os.environ.get(IMAGE_ENV))
 
 
 def prog() -> str:

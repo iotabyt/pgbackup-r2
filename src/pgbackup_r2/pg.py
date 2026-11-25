@@ -6,12 +6,14 @@ never on its command line.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import subprocess
 import tempfile
 from collections.abc import Sequence
 
+from . import hints
 from .agecrypt import recipient_args
 from .errors import CommandError
 from .pgurl import child_env, parse_url
@@ -41,6 +43,59 @@ def psql(url: str, sql: str) -> str:
 
 def server_version(url: str) -> str:
     return psql(url, "SHOW server_version")
+
+
+def server_major(url: str) -> int:
+    """The server's major version, e.g. 19."""
+    return int(psql(url, "SHOW server_version_num")) // 10000
+
+
+def client_major(tool: str = "pg_dump") -> int | None:
+    """The major version of the pg_dump (or other tool) on PATH, e.g. 18."""
+    with contextlib.suppress(Exception):
+        out = subprocess.run([tool, "--version"], capture_output=True, text=True).stdout
+        m = re.search(r"\s(\d+)(?:\.\d+)?", out)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def newer_server(server: int, client: int) -> CommandError:
+    """pg_dump refuses a server newer than itself. Say so before it does, with the fix for
+    how pgbackup-r2 is being run: through pgb, the image directly, or installed with pip."""
+    if hints.under_pgb():
+        return CommandError(
+            f"Your server is Postgres {server} but this image has pg_dump {client}",
+            hint=f"Set PG_MAJOR={server} in .env, so pgb uses the pg{server} image",
+        )
+    if hints.in_image():
+        return CommandError(
+            f"Your server is Postgres {server} but this image has pg_dump {client}",
+            hint=f"Set PG_MAJOR={server} (pgb), or use the -pg{server} image tag",
+        )
+    return CommandError(
+        f"Your server is Postgres {server} but pg_dump on this machine is {client}",
+        hint=f"Install postgresql-client-{server} (macOS: brew install postgresql@{server}) "
+        "and put its bin folder first on PATH",
+    )
+
+
+def check_can_dump(server: int, client: int | None) -> None:
+    """A newer pg_dump dumps an older server fine; an older one refuses a newer server."""
+    if client is not None and server > client:
+        raise newer_server(server, client)
+
+
+_DUMPED_BY = re.compile(r"Dumped by pg_dump version: (\d+)")
+
+
+def dumped_by_major(dump_path: str) -> int | None:
+    """The major version of the pg_dump that wrote a dump, from its table of contents."""
+    with contextlib.suppress(Exception):
+        m = _DUMPED_BY.search(list_toc(dump_path))
+        if m:
+            return int(m.group(1))
+    return None
 
 
 def table_counts(url: str) -> dict[str, int]:
@@ -124,11 +179,14 @@ def _with_version_hint(fn):
             hint = "The dump was made by a newer pg_dump than this pg_restore can read"
         else:
             raise
-        raise CommandError(
-            f"{text}. {hint}",
-            hint="Set PG_MAJOR in .env to your server's major version (SHOW server_version;), "
-            "so backups and restores use the matching image",
-        ) from None
+        fix = (
+            "Set PG_MAJOR in .env to your server's major version (SHOW server_version;), "
+            "so backups and restores use the matching image"
+            if hints.under_pgb() or hints.in_image()
+            else "Use pg_dump and pg_restore from your server's major version "
+            "(SHOW server_version;)"
+        )
+        raise CommandError(f"{text}. {hint}", hint=fix) from None
 
 
 def is_pg_dump(path: str) -> bool:

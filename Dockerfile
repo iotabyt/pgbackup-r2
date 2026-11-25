@@ -11,13 +11,14 @@ RUN uv build --wheel --out-dir /dist
 # --- runtime: Python + age + the matching Postgres client ---------------------------------
 FROM python:3.12-slim-bookworm
 
-# The client must match your server's major version: build pg16, pg17 and pg18 images.
+# The client must match your server's major version: build pg16, pg17, pg18 and pg19 images.
 ARG PG_MAJOR=16
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PGBACKUP_R2_IMAGE=pg${PG_MAJOR} \
     PATH=/usr/lib/postgresql/${PG_MAJOR}/bin:$PATH
 
 RUN set -eux; \

@@ -7,7 +7,7 @@
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 # Git Bash on Windows: don't rewrite /out
 
-PGB_VERSION=0.4.2
+PGB_VERSION=0.4.3
 REPO=ghcr.io/iotabyt/pgbackup-r2
 
 die() {
@@ -478,7 +478,7 @@ cmd_doctor() {
   load_image_version
   if [[ -z $IMAGE_VERSION ]]; then
     echo "✗ Couldn't run the image $image"
-    echo "    Check the PG_MAJOR in .env, and that Docker can pull from ghcr.io"
+    echo "    Check the PG_MAJOR in .env (16, 17, 18 or 19), and that Docker can pull from ghcr.io"
     return 1
   elif [[ $IMAGE_VERSION == "$PGB_VERSION" ]]; then
     echo "✓ pgb and the image are both $PGB_VERSION"

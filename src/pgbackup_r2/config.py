@@ -56,6 +56,8 @@ KNOWN_SETTINGS: tuple[str, ...] = (
     # set by pgb for the container; not for people to set
     "PGB_VERSION",
     "PGB_ENV_KEYS",
+    # set in the Docker image (pg16 ... pg19); not for people to set
+    "PGBACKUP_R2_IMAGE",
 )
 # Prefixes that are ours: an unknown name starting with one of these is almost surely a typo.
 _OUR_PREFIXES = ("S3_", "AGE_", "PGB_", "DRILL_", "HEARTBEAT_", "BACKUP_", "RESTORE_", "RETENTION")

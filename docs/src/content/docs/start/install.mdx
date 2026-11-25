@@ -71,14 +71,14 @@ The install lines fetch `pgb` from the latest release on GitHub, never from the 
 <TabItem label="bash, zsh, fish">
 
 ```bash
-curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | PGB_VERSION=v0.4.2 sh
+curl -fsSL https://pgbackup-r2.iotabyt.com/install.sh | PGB_VERSION=v0.4.3 sh
 ```
 
 </TabItem>
 <TabItem label="PowerShell">
 
 ```powershell
-$env:PGB_VERSION = 'v0.4.2'; irm https://pgbackup-r2.iotabyt.com/install.ps1 | iex
+$env:PGB_VERSION = 'v0.4.3'; irm https://pgbackup-r2.iotabyt.com/install.ps1 | iex
 ```
 
 </TabItem>
@@ -186,7 +186,7 @@ rm -f ~/.local/bin/pgb
 # The pgb nightly containers, found by pgbackup-r2's image label:
 docker ps -a --filter "label=org.opencontainers.image.source=https://github.com/iotabyt/pgbackup-r2" --filter name=pgbackup
 docker rm -f pgbackup-shop                             # each name listed above
-docker image rm ghcr.io/iotabyt/pgbackup-r2:pg16       # and :pg17, :pg18 if you pulled them
+docker image rm ghcr.io/iotabyt/pgbackup-r2:pg16       # and :pg17, :pg18, :pg19 if you pulled them
 ```
 
 </TabItem>

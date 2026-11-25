@@ -47,7 +47,7 @@ jobs:
             ghcr.io/iotabyt/pgbackup-r2:pg17 backup
 ```
 
-- **Set the image tag to your Postgres major version** (`pg16`, `pg17` or `pg18`). Run `SHOW server_version;` to check. See [Postgres versions](/concepts/postgres-versions/).
+- **Set the image tag to your Postgres major version** (`pg16`, `pg17`, `pg18` or `pg19`). Run `SHOW server_version;` to check. See [Postgres versions](/concepts/postgres-versions/).
 - **Only the public key goes in the secrets.** The workflow can write backups but never read them. The private key stays in your password manager and on your laptop.
 - **`-e NAME` with no value** passes the variable through from the step's environment, so secrets never appear on a command line.
 - **Set a heartbeat.** Scheduled runs can start some minutes late, or fail, and a heartbeat (`HEARTBEAT_URL`) notices when backups stop. (GitHub also disables scheduled workflows after 60 days without activity, but only in **public** repos. A private repo, which is what you want here, isn't affected.)

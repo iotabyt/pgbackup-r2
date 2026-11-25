@@ -9,7 +9,6 @@ import contextlib
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 from collections.abc import Mapping
@@ -85,6 +84,8 @@ def backup(settings: Settings, *, prune: bool | None = None) -> str:
         log_line=f"backing up {short_url(url)} to s3://{store.bucket}/{key}",
     ) as s:
         version = pg.server_version(url)
+        # pg_dump refuses a newer server; say why now, not as its own error after a while.
+        pg.check_can_dump(pg.server_major(url), pg.client_major())
         tables = pg.table_counts(url)
         s.done = f"Counted rows in {len(tables)} tables"
         s.detail = f"(PostgreSQL {version.split()[0]})"
@@ -354,6 +355,27 @@ def drill_preflight(settings: Settings, which: str | None) -> int:
     return 0
 
 
+def _warn_older_scratch(url: str, dump_path: str) -> None:
+    """A dump from a newer pg_dump can carry settings an older server doesn't know (17's
+    transaction_timeout broke restores into 16). Warn; the restore itself says if it fails."""
+    dumped = pg.dumped_by_major(dump_path)
+    try:
+        scratch = pg.server_major(url)
+    except (PgBackupError, ValueError):
+        return  # the restore reports an unreachable scratch database
+    if dumped is not None and scratch < dumped:
+        fix = (
+            f"set PG_MAJOR={dumped} in .env"
+            if hints.under_pgb()
+            else f"point DRILL_DATABASE_URL at a Postgres {dumped} server"
+        )
+        ui.warn(
+            f"this backup was made by pg_dump {dumped}, but the scratch database is Postgres "
+            f"{scratch}: newer dumps can carry settings older servers don't know, so the restore "
+            f"may fail. To drill like for like, {fix}"
+        )
+
+
 def drill(settings: Settings, which: str | None) -> int:
     url = settings.require_drill_url()
     if settings.database_url and same_database(url, settings.database_url):
@@ -375,6 +397,7 @@ def drill(settings: Settings, which: str | None) -> int:
         with workdir() as tmp:
             plain = os.path.join(tmp, f"{b.stamp}.dump")
             _fetch_and_decrypt(settings, store, b, tmp, plain)
+            _warn_older_scratch(url, plain)
             with ui.step(
                 "Restoring into the scratch database",
                 done="Restored into the scratch database",
@@ -658,12 +681,7 @@ DOCTOR_REQUIRED = (
 
 def _tools_major() -> int | None:
     """The major version of this image's pg_dump, e.g. 16."""
-    with contextlib.suppress(Exception):
-        out = subprocess.run(["pg_dump", "--version"], capture_output=True, text=True).stdout
-        m = re.search(r"\s(\d+)(?:\.\d+)?", out)
-        if m:
-            return int(m.group(1))
-    return None
+    return pg.client_major()
 
 
 def doctor(env: Mapping[str, str] | None = None) -> int:
@@ -752,21 +770,26 @@ def doctor(env: Mapping[str, str] | None = None) -> int:
                     f"Set PG_MAJOR={major} in .env, so the image (pg{major}) and the drill's "
                     "scratch database match the server",
                 )
+            elif tools is not None and major > tools:
+                err = pg.newer_server(major, tools)
+                check(False, f"Database: {db}: {err}", err.hint)
             elif tools is not None and major != tools and hints.under_pgb():
                 check(
                     False,
                     f"Database: {db} is PostgreSQL {version}, but this image's tools are {tools}",
                     f"Use the pg{major} image (pgb: PG_MAJOR={major} in .env)",
                 )
-            elif tools is not None and major != tools:
-                # Run directly: the tools are whatever pg_dump is first on PATH, in the image
-                # or on this machine.
+            elif tools is not None and major < tools:
+                # Run directly, with newer tools: backups work, restoring into a server this
+                # old may not.
+                where = "this image has pg_dump" if hints.in_image() else "pg_dump here is"
                 check(
-                    False,
-                    f"Database: {db} is PostgreSQL {version}, but pg_dump here is {tools}",
-                    f"Put Postgres {major}'s client tools first on PATH (Debian/Ubuntu: "
-                    f"postgresql-client-{major}), or use the pg{major} image. "
-                    "Why: https://pgbackup-r2.iotabyt.com/concepts/postgres-versions/",
+                    ui.WARN,
+                    f"Database: connected to {db}, PostgreSQL {version}, and {where} "
+                    f"{tools}: fine for backups. Restoring into a Postgres {major} server may "
+                    "not be.",
+                    f"Restore and drill into Postgres {tools} or newer, or use Postgres {major}'s "
+                    "tools: https://pgbackup-r2.iotabyt.com/concepts/postgres-versions/",
                 )
             else:
                 check(True, f"Database: connected to {db}, PostgreSQL {version}")

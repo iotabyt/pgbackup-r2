@@ -383,17 +383,21 @@ def test_upload_to_a_missing_bucket_is_one_line_not_a_traceback(s3, tmp_path):
     )
 
 
-def test_doctor_without_pgb_compares_the_server_with_pg_dump_on_path(s3, monkeypatch, capsys):
+def test_doctor_without_pgb_is_fine_with_newer_tools_but_warns(s3, monkeypatch, capsys):
+    monkeypatch.delenv("PGBACKUP_R2_IMAGE", raising=False)
     monkeypatch.setattr(commands.pg, "psql", lambda *a, **k: "180006")
     monkeypatch.setattr(commands.pg, "server_version", lambda url: "18.6")
     monkeypatch.setattr(commands, "_tools_major", lambda: 19)
     monkeypatch.setenv("DATABASE_URL", "postgresql://app:pw@localhost:5432/shop")
     _, out = doctor(capsys)
-    assert "✗ Database: localhost/shop is PostgreSQL 18.6, but pg_dump here is 19" in out
-    assert "postgresql-client-18" in out
+    assert (
+        "⚠ Database: connected to localhost/shop, PostgreSQL 18.6, and pg_dump here is 19: "
+        "fine for backups." in out
+    )
+    assert "✗ Database" not in out
     assert "PG_MAJOR" not in out  # never set, so never blamed
 
-    monkeypatch.setenv("PGB_VERSION", "0.4.2")  # under pgb: unchanged
+    monkeypatch.setenv("PGB_VERSION", "0.4.3")  # under pgb: unchanged
     _, out = doctor(capsys)
     assert "✗ Database: localhost/shop is PostgreSQL 18.6, but PG_MAJOR is 19" in out
 

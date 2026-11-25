@@ -22,7 +22,7 @@
 #   HEARTBEAT_FAIL_URL    whatever reason. (GitHub's 60-day pause for inactive scheduled
 #                         workflows only applies to public repos; a private one isn't affected.)
 #
-# Set the image tag to your server's Postgres major version (pg16, pg17 or pg18).
+# Set the image tag to your server's Postgres major version (pg16, pg17, pg18 or pg19).
 
 name: nightly backup
 

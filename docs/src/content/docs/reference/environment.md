@@ -56,6 +56,8 @@ pgb also passes two variables of its own to the container. Don't set them yourse
 - `PGB_VERSION`, which tells the image it runs under `pgb`, so help and hints name `pgb` commands (`pgb doctor`). Without it, they name `pgbackup-r2` ones (`pgbackup-r2 doctor`).
 - `PGB_ENV_KEYS`, for `pgb doctor` only: the names in `.env`, never the values, so `doctor` can catch a misspelt setting
 
+The image also sets `PGBACKUP_R2_IMAGE` (`pg16` … `pg19`), so messages can tell the image's tools from a `pip` install's. Don't set that one either.
+
 ## Output
 
 | Variable | Notes |

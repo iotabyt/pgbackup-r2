@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 0.4.3 (2026-11-25)
+
+Postgres 19 is out, so there's an image for it. And when the server is newer than `pg_dump`, you hear about it in plain words before the backup starts, not as `pg_dump`'s own error in the middle of the night.
+
+- **Postgres 19 images:** `pg19`, and `v0.4.3-pg19` for this release, next to `pg16`, `pg17` and `pg18`. `PG_MAJOR=19` in `.env` picks it up. The Dockerfile didn't need changing: the PostgreSQL apt repository has `postgresql-client-19` for the same Debian base.
+- **CI runs the tests against Postgres 16 and 19,** the oldest and newest supported majors, each with the matching client tools.
+- **A server newer than `pg_dump`** fails `backup` before it dumps, and fails `doctor`: "Your server is Postgres 19 but this image has pg_dump 18". The fix depends on how you run it:
+  - With `pgb`: set `PG_MAJOR=19` in `.env`.
+  - With the image directly: use the `-pg19` tag.
+  - Installed with `pip`: install `postgresql-client-19` and put it first on `PATH`.
+- **Newer tools than the server are fine for backups.** Without `pgb`, `doctor` now says so with a ⚠ rather than a ✗. It still mentions that restoring into a server that old may not work.
+- **`drill` warns when the scratch database is older than the `pg_dump` that made the backup,** since newer dumps can carry settings older servers don't know (Postgres 17's `transaction_timeout` broke restores into 16). With `pgb`, the fix is `PG_MAJOR`; without it, a newer `DRILL_DATABASE_URL`.
+- **The image says it's the image:** it sets `PGBACKUP_R2_IMAGE` (`pg16` … `pg19`), so messages can tell its tools apart from a `pip` install's. It's internal, like `PGB_VERSION`.
+- **Docs:** Postgres versions lists 16 to 19 and the release tags. It notes that a Postgres 18 backup restores cleanly into 19. Troubleshooting has the new messages.
+
+### Upgrading from 0.4.2
+
+Nothing to change. Re-run the install line, then `pgb update` in each backup folder. Or `pip install -U pgbackup-r2`. On Postgres 19? Set `PG_MAJOR=19` and run `pgb update`.
+
 ## 0.4.2 (2026-11-25)
 
 First-run fixes for running the CLI directly, from `pip` or `uvx`. I went through the PyPI page from scratch, and these are the things that tripped me up.

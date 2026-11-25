@@ -35,7 +35,9 @@ Start with `pgb doctor`. It checks each piece in turn and prints a fix under wha
 
 **`unsupported version (…) in file header`** or **`unrecognized configuration parameter "transaction_timeout"`.** `PG_MAJOR` doesn't match your server's major version. See [Postgres versions](/concepts/postgres-versions/).
 
-**`server version mismatch` from `pg_dump`.** The image is older than the server. Raise `PG_MAJOR`, then run `pgb update`.
+**`Your server is Postgres 19 but this image has pg_dump 18`** (or, from older versions, `server version mismatch` from `pg_dump`). The image is older than the server. Raise `PG_MAJOR`, then run `pgb update`. Installed with `pip`, install the matching `postgresql-client-<N>` and put it first on `PATH`.
+
+**`this backup was made by pg_dump 19, but the scratch database is Postgres 18`.** A warning from `drill`: the scratch server is older than the backup's `pg_dump`. Drill into the same major, or newer.
 
 ## Drills and restores
 
@@ -58,7 +60,7 @@ Each line starts with ✓ (fine), ✗ (fails `doctor`, exit 1), ⚠ (worth a loo
 | Message | What it means, and the fix |
 |---|---|
 | `Docker isn't running, or you can't reach it` | Start Docker. On Linux, add yourself to the `docker` group. |
-| `Couldn't run the image …` | Docker couldn't pull or start the image. Check `PG_MAJOR` in `.env` (16, 17 or 18), and that Docker can reach `ghcr.io`. |
+| `Couldn't run the image …` | Docker couldn't pull or start the image. Check `PG_MAJOR` in `.env` (16, 17, 18 or 19), and that Docker can reach `ghcr.io`. |
 | `Image 0.1.1 has no doctor checks of its own` | The image is too old for `doctor`. Run `pgb update`. |
 | `No .env in <folder>` | Run `pgb init`, or `cd` to the folder that has your `.env`. |
 | `Settings: X, Y are not set` | Fill them in. The fix line says what each one is. `… is empty` means the name is there with nothing after the `=`. |
@@ -78,8 +80,8 @@ Each line starts with ✓ (fine), ✗ (fails `doctor`, exit 1), ⚠ (worth a loo
 
 | Message | What to do |
 |---|---|
-| `The image is 0.3.2, older than pgb 0.4.2` | Run `pgb update` to pull the image that matches. Until then, newer features are skipped: `pgb drill` drills without its preflight check, with a one-line note. |
-| `pgb 0.4.2 is older than the image (…)` | Re-run the install line to update `pgb` itself. |
+| `The image is 0.3.2, older than pgb 0.4.3` | Run `pgb update` to pull the image that matches. Until then, newer features are skipped: `pgb drill` drills without its preflight check, with a one-line note. |
+| `pgb 0.4.3 is older than the image (…)` | Re-run the install line to update `pgb` itself. |
 | `TIERS isn't set and there are no backups directly under …, but found backups in …` | Your backups live in tier folders, but without `TIERS`, `list`, `restore` and `drill` only look at the prefix itself. Set `TIERS` as the fix line shows, quotes included. |
 | `.env: pgbackup-r2 doesn't read .env, and X, Y from it aren't in the environment.` | Without `pgb`, nothing reads `.env` for you. Load it into the shell first: `set -a; source .env; set +a`. |
 | `This bucket has never been drilled.` | Run `pgb drill`. |
